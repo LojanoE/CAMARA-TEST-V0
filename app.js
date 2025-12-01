@@ -667,7 +667,7 @@ async function addMetadataAndSave(imageDataUrl, metadata) {
             elements.photoPreview.src = imageWithExif;
             
             // Auto rotate 90 degrees LEFT per requirement
-            await rotateImage(-90); 
+            await rotateImage(0); 
 
             // SAVE TO DB AUTOMATICALLY
             await savePhotoToDB(appState.photoWithMetadata, metadata);

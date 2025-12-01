@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CAM-TEST-V0 - Aplicación de Captura de Fotos</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="img/icon-512x512.png" type="image/png">
+    <link rel="apple-touch-icon" href="img/icon-512x512.png">
+    <meta name="theme-color" content="#007bff">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📷</text></svg>">
+</head>
+<body>
+    <div class="container-fluid">
+        <header class="header">
+            <img src="img/LOGO GDR.jpeg" alt="GDR Logo" class="logo">
+            <h1>CAM-TEST-V0</h1>
+        </header>
+        
+        <main class="main-content">
+            <div id="camera-section">
+                <div class="video-container">
+                    <video id="video" autoplay playsinline></video>
+                    <canvas id="canvas" width="640" height="480"></canvas>  
+                </div>
+                
+                <div class="controls">
+                    <button id="flash-toggle" class="control-btn" disabled><i class="fas fa-bolt"></i> <span id="flash-mode-text" class="flash-text"></span></button>
+                    <button id="zoom-in" class="control-btn" disabled><i class="fas fa-search-plus"></i></button>
+                    <button id="zoom-out" class="control-btn" disabled><i class="fas fa-search-minus"></i></button>
+                    <span id="zoom-level" class="zoom-level">1x</span>
+                    <button id="take-photo" class="control-btn" disabled><i class="fas fa-circle"></i></button>
+                </div>
+            </div>
+            
+            <div id="form-section" class="hidden">
+                <div class="form-container">
+                    <h2>Formulario de Observación</h2>
+                    
+                    <div class="form-group">
+                        <label for="work-front-search">Frente de Trabajo:</label>
+                        <div class="searchable-select">
+                            <input type="text" id="work-front-search" placeholder="Buscar o seleccionar frente..." autocomplete="off">
+                            <div id="work-front-options" class="searchable-options hidden"></div>
+                            <select id="work-front" required class="hidden">
+                                <option value="">Seleccione una opción</option>
+                                <option value="otro">Otro</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group hidden" id="other-work-front-group">
+                        <label for="other-work-front">Especifique Frente de Trabajo:</label>
+                        <input type="text" id="other-work-front" placeholder="Ingrese el frente de trabajo personalizado">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="coronation">Coronamiento:</label>
+                        <select id="coronation" required>
+                            <option value="">Seleccione una opción</option>
+                            <option value="C945">C945</option>
+                            <option value="C960">C960</option>
+                            <option value="C970">C970</option>
+                            <option value="C980">C980</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="observation-category">Categoría de Observación:</label>
+                        <select id="observation-category" required>
+                            <option value="">Seleccione una opción</option>
+                            <option value="rutina">Rutina</option>
+                            <option value="liberacion">Liberación</option>
+                            <option value="novedad">Novedad</option>
+                            <option value="importante">Importante</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="activity-performed">Actividad Realizada:</label>
+                        <textarea id="activity-performed" rows="4"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="gps-coords">Coordenadas GPS:</label>
+                        <input type="text" id="gps-coords" disabled>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button id="save-metadata" class="btn btn-primary">Guardar Foto con Metadatos</button>
+                        <button id="save-photo-without-form" class="btn btn-secondary">Guardar Foto sin Formulario</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="result-section" class="result-container hidden">
+                <h2>Foto Capturada</h2>
+                <img id="photo-preview" src="" alt="Vista previa de la foto">
+                <div class="rotation-controls">
+                    <button id="rotate-left" class="btn btn-secondary"><i class="fas fa-undo"></i> Girar Izquierda</button>
+                    <button id="rotate-right" class="btn btn-secondary">Girar Derecha <i class="fas fa-redo"></i></button>
+                </div>
+                <div class="action-buttons">
+                    <button id="new-capture" class="btn btn-secondary">Nueva Captura</button>
+                    <button id="download-photo" class="btn btn-primary">Guardar en Galería</button>
+                    <button id="view-metadata" class="btn btn-secondary">Ver Metadatos</button>
+                </div>
+            </div>
+        </main>
+        
+        <div id="status-message" class="status hidden"></div>
+    </div>
+
+    <div id="metadata-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Metadatos de la Imagen</h2>
+            <pre id="metadata-display"></pre>
+        </div>
+    </div>
+
+    <script src="exif.js"></script>
+    <script src="piexif.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

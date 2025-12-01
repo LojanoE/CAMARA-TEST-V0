@@ -19,7 +19,7 @@
     <div class="container-fluid">
         <header class="header">
             <img src="img/LOGO GDR.jpeg" alt="GDR Logo" class="logo">
-            <h1>CAM-TEST-V1.0</h1>
+            <h1>CAM-TEST-V1.1</h1>
         </header>
         
         <main class="main-content">
@@ -35,6 +35,21 @@
 
                 <div class="controls native-controls">
                     <button id="take-photo" class="control-btn big-btn" disabled><i class="fas fa-camera"></i> ABRIR CÁMARA</button>
+                </div>
+
+                <div id="gallery-container" class="gallery-container">
+                    <div class="gallery-header">
+                        <h3>Galería Local (<span id="gallery-count">0</span>)</h3>
+                        <div class="gallery-actions">
+                            <button id="select-all-btn" class="btn-small">Todos</button>
+                            <button id="download-selected-btn" class="btn-small btn-success" disabled><i class="fas fa-download"></i> Descargar</button>
+                            <button id="delete-selected-btn" class="btn-small btn-danger" disabled><i class="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                    <div id="gallery-grid" class="gallery-grid">
+                        <!-- Las fotos aparecerán aquí -->
+                        <p class="empty-msg">No hay fotos guardadas aún.</p>
+                    </div>
                 </div>
             </div>
             
@@ -124,6 +139,18 @@
         </div>
     </div>
 
+    <!-- Galería Section (Template) -->
+    <template id="gallery-item-template">
+        <div class="gallery-item">
+            <img src="" alt="Foto guardada">
+            <div class="gallery-item-overlay">
+                <input type="checkbox" class="gallery-checkbox">
+            </div>
+        </div>
+    </template>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
     <script src="exif.js"></script>
     <script src="piexif.js"></script>
     <script src="app.js"></script>

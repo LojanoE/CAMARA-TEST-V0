@@ -1,23 +1,24 @@
-// GDR-CAM Application Logic - Native Camera Version
+// GDR-CAM Application Logic - Native Camera + Gallery Version
 
 // Application state
 const appState = {
     capturedPhotoDataUrl: null,
     photoWithMetadata: null,
     currentLocation: null,
-    bestLocation: null, // Track the best GPS reading found so far
-    locationWatcher: null, // Store the GPS watcher ID
-    imageRotation: 0, // Track current rotation angle
-    originalPhotoWithMetadata: null, // Store the original image for rotation operations
-    isGpsDisplayThrottled: false, // Flag to throttle GPS display updates
-    gpsDisplayThrottleTime: 5000, // Throttle GPS display updates to every 5 seconds
-    isFormInteractionActive: false // Flag to pause background updates during form interaction
+    bestLocation: null,
+    locationWatcher: null,
+    imageRotation: 0,
+    originalPhotoWithMetadata: null,
+    isGpsDisplayThrottled: false,
+    gpsDisplayThrottleTime: 5000,
+    isFormInteractionActive: false,
+    db: null // IndexedDB instance
 };
 
 // DOM Elements
 const elements = {
-    cameraInput: null, // The native file input
-    canvas: null, // We still use canvas for processing
+    cameraInput: null,
+    canvas: null,
     takePhotoBtn: null,
     formSection: null,
     resultSection: null,
@@ -34,14 +35,20 @@ const elements = {
     otherWorkFrontInput: null,
     workFrontSearch: null,
     workFrontOptions: null,
-    gpsStatus: null // New element for GPS feedback on camera screen
+    gpsStatus: null,
+    // Gallery Elements
+    galleryGrid: null,
+    selectAllBtn: null,
+    downloadSelectedBtn: null,
+    deleteSelectedBtn: null,
+    galleryCount: null
 };
 
 // Initialize the application
 function init() {
     // Get DOM elements
     elements.cameraInput = document.getElementById('camera-input');
-    elements.canvas = document.createElement('canvas'); // Off-screen canvas for processing
+    elements.canvas = document.createElement('canvas');
     elements.takePhotoBtn = document.getElementById('take-photo');
     elements.formSection = document.getElementById('form-section');
     elements.resultSection = document.getElementById('result-section');
@@ -59,28 +66,225 @@ function init() {
     elements.workFrontSearch = document.getElementById('work-front-search');
     elements.workFrontOptions = document.getElementById('work-front-options');
     elements.gpsStatus = document.getElementById('gps-status');
+    // Gallery Elements
+    elements.galleryGrid = document.getElementById('gallery-grid');
+    elements.selectAllBtn = document.getElementById('select-all-btn');
+    elements.downloadSelectedBtn = document.getElementById('download-selected-btn');
+    elements.deleteSelectedBtn = document.getElementById('delete-selected-btn');
+    elements.galleryCount = document.getElementById('gallery-count');
     
-    // Load dynamic and persistent data
     loadWorkFronts();
     loadPersistentData();
-    
-    // Attach event listeners
     attachEventListeners();
+    initDB(); // Initialize Database
     
-    // Service Worker Registration
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('./sw.js')
-                .then(registration => console.log('ServiceWorker registrado:', registration))
-                .catch(error => console.log('ServiceWorker error:', error));
+            navigator.serviceWorker.register('./sw.js');
         });
     }
         
-    // Start GPS immediately
     startGpsSystem();
 }
 
-// Function to load work fronts from JSON file
+// --- IndexedDB Logic ---
+function initDB() {
+    const request = indexedDB.open('GDR_CAM_DB', 1);
+
+    request.onerror = (event) => {
+        console.error("DB Error:", event.target.errorCode);
+        showStatus('Error al iniciar base de datos local', 'error');
+    };
+
+    request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains('photos')) {
+            const objectStore = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+            objectStore.createIndex('timestamp', 'timestamp', { unique: false });
+        }
+    };
+
+    request.onsuccess = (event) => {
+        appState.db = event.target.result;
+        loadGallery(); // Load photos when DB is ready
+    };
+}
+
+function savePhotoToDB(photoDataUrl, metadata) {
+    return new Promise((resolve, reject) => {
+        if (!appState.db) return reject('DB not initialized');
+
+        const transaction = appState.db.transaction(['photos'], 'readwrite');
+        const store = transaction.objectStore('photos');
+
+        const photoRecord = {
+            image: photoDataUrl,
+            metadata: metadata,
+            timestamp: new Date().getTime(), // For sorting
+            displayDate: new Date().toLocaleString()
+        };
+
+        const request = store.add(photoRecord);
+
+        request.onsuccess = () => {
+            console.log('Photo saved to DB');
+            resolve();
+            loadGallery(); // Refresh gallery
+        };
+
+        request.onerror = (e) => {
+            console.error('Error saving to DB', e);
+            reject(e);
+        };
+    });
+}
+
+function loadGallery() {
+    if (!appState.db) return;
+
+    const transaction = appState.db.transaction(['photos'], 'readonly');
+    const store = transaction.objectStore('photos');
+    const index = store.index('timestamp');
+    const request = index.openCursor(null, 'prev'); // Newest first
+
+    elements.galleryGrid.innerHTML = '';
+    let count = 0;
+
+    request.onsuccess = (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+            renderGalleryItem(cursor.value);
+            count++;
+            cursor.continue();
+        } else {
+            elements.galleryCount.textContent = count;
+            if (count === 0) {
+                elements.galleryGrid.innerHTML = '<p class="empty-msg">No hay fotos guardadas aún.</p>';
+            }
+            updateGalleryButtons();
+        }
+    };
+}
+
+function renderGalleryItem(item) {
+    const template = document.getElementById('gallery-item-template');
+    const clone = template.content.cloneNode(true);
+    const div = clone.querySelector('.gallery-item');
+    const img = clone.querySelector('img');
+    const checkbox = clone.querySelector('.gallery-checkbox');
+
+    img.src = item.image;
+    checkbox.dataset.id = item.id;
+    div.dataset.id = item.id;
+
+    // Selection logic
+    div.addEventListener('click', (e) => {
+        if (e.target !== checkbox) {
+            checkbox.checked = !checkbox.checked;
+        }
+        div.classList.toggle('selected', checkbox.checked);
+        updateGalleryButtons();
+    });
+
+    checkbox.addEventListener('change', () => {
+        div.classList.toggle('selected', checkbox.checked);
+        updateGalleryButtons();
+    });
+
+    elements.galleryGrid.appendChild(clone);
+}
+
+function deleteSelectedPhotos() {
+    if (!appState.db) return;
+    
+    const checkboxes = document.querySelectorAll('.gallery-checkbox:checked');
+    if (checkboxes.length === 0) return;
+
+    if (!confirm(`¿Eliminar ${checkboxes.length} fotos seleccionadas?`)) return;
+
+    const transaction = appState.db.transaction(['photos'], 'readwrite');
+    const store = transaction.objectStore('photos');
+
+    let deleted = 0;
+    checkboxes.forEach(cb => {
+        store.delete(Number(cb.dataset.id));
+        deleted++;
+    });
+
+    transaction.oncomplete = () => {
+        showStatus(`${deleted} fotos eliminadas.`, 'success');
+        loadGallery();
+    };
+}
+
+async function downloadSelectedPhotos() {
+    const checkboxes = document.querySelectorAll('.gallery-checkbox:checked');
+    if (checkboxes.length === 0) return;
+
+    elements.downloadSelectedBtn.disabled = true;
+    
+    const transaction = appState.db.transaction(['photos'], 'readonly');
+    const store = transaction.objectStore('photos');
+    
+    let processed = 0;
+    const total = checkboxes.length;
+
+    showStatus(`Iniciando descarga de ${total} fotos...`, 'info');
+
+    // Process sequentially to prevent browser choking and ensure order
+    for (const cb of checkboxes) {
+        elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${processed + 1}/${total}`;
+        
+        await new Promise((resolve) => {
+            const request = store.get(Number(cb.dataset.id));
+            
+            request.onsuccess = async () => {
+                const item = request.result;
+                if (item) {
+                    try {
+                        // Add overlay before downloading
+                        const finalImage = await addTimestampAndLogoToImage(item.image);
+                        const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                        const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
+                        
+                        // Trigger download
+                        saveAs(dataURLtoBlob(finalImage), filename);
+                    } catch (e) {
+                        console.error("Error preparando imagen:", e);
+                    }
+                }
+                // Small delay to allow the browser to handle the download event
+                setTimeout(resolve, 500);
+            };
+            
+            request.onerror = (e) => {
+                console.error("Error DB:", e);
+                resolve(); // Continue even if one fails
+            };
+        });
+        
+        processed++;
+    }
+
+    showStatus('Descargas completadas.', 'success');
+    elements.downloadSelectedBtn.innerHTML = '<i class="fas fa-download"></i> Descargar';
+    elements.downloadSelectedBtn.disabled = false;
+}
+
+function updateGalleryButtons() {
+    const selected = document.querySelectorAll('.gallery-checkbox:checked').length;
+    const total = document.querySelectorAll('.gallery-checkbox').length;
+    
+    elements.downloadSelectedBtn.disabled = selected === 0;
+    elements.deleteSelectedBtn.disabled = selected === 0;
+    
+    if (elements.selectAllBtn) {
+        elements.selectAllBtn.textContent = (selected === total && total > 0) ? 'Ninguno' : 'Todos';
+    }
+}
+
+// --- Standard Application Logic ---
+
 async function loadWorkFronts() {
     try {
         const response = await fetch('frentes.json');
@@ -100,11 +304,9 @@ async function loadWorkFronts() {
         populateWorkFrontOptions();
     } catch (error) {
         console.error('Could not load work fronts:', error);
-        showStatus('Error al cargar la lista de frentes.', 'error');
     }
 }
 
-// Function to load persistent form data
 function loadPersistentData() {
     try {
         const savedData = localStorage.getItem('gdrCamFormData');
@@ -133,21 +335,12 @@ function loadPersistentData() {
     }
 }
 
-// Attach all event listeners
 function attachEventListeners() {
-    // Camera Trigger
-    elements.takePhotoBtn.addEventListener('click', () => {
-        elements.cameraInput.click();
-    });
-
-    // Native Camera Input Change
+    elements.takePhotoBtn.addEventListener('click', () => elements.cameraInput.click());
     elements.cameraInput.addEventListener('change', handleNativeCameraCapture);
-
-    // Form Actions
     elements.saveMetadataBtn.addEventListener('click', handleSaveMetadata);
-    elements.saveWithoutFormBtn.addEventListener('click', handleSaveWithoutForm); // Separate handler
+    elements.saveWithoutFormBtn.addEventListener('click', handleSaveWithoutForm);
 
-    // UI Logic
     const workFrontSelect = document.getElementById('work-front');
     workFrontSelect.addEventListener('change', () => {
         if (workFrontSelect.value === 'otro') {
@@ -157,352 +350,255 @@ function attachEventListeners() {
         }
     });
 
-    // Searchable Select Logic
     setupSearchableSelect();
-
-    // Form Interaction Logic (Pause updates)
     setupFormInteractionLogic();
 
-    // Navigation
     elements.newCaptureBtn.addEventListener('click', newCapture);
     elements.downloadPhotoBtn.addEventListener('click', handleDownload);
     
-    // Rotation
     elements.rotateLeftBtn.addEventListener('click', () => rotateImage(-90));
     elements.rotateRightBtn.addEventListener('click', () => rotateImage(90));
     
-    // Metadata Modal
     setupMetadataModal();
+
+    // Gallery Listeners
+    if (elements.selectAllBtn) {
+        elements.selectAllBtn.addEventListener('click', () => {
+            const allCheckboxes = document.querySelectorAll('.gallery-checkbox');
+            const anyUnchecked = Array.from(allCheckboxes).some(cb => !cb.checked);
+            
+            allCheckboxes.forEach(cb => {
+                cb.checked = anyUnchecked;
+                cb.parentElement.parentElement.classList.toggle('selected', anyUnchecked);
+            });
+            updateGalleryButtons();
+        });
+    }
+
+    if (elements.deleteSelectedBtn) elements.deleteSelectedBtn.addEventListener('click', deleteSelectedPhotos);
+    if (elements.downloadSelectedBtn) elements.downloadSelectedBtn.addEventListener('click', downloadSelectedPhotos);
 }
 
-// Handle the file returned by the native camera
 function handleNativeCameraCapture(event) {
     const file = event.target.files[0];
-    if (!file) return; // User cancelled
+    if (!file) return;
 
-    showStatus('Procesando imagen...', 'success');
+    showStatus('Procesando...', 'success');
     
     const reader = new FileReader();
     reader.onload = (e) => {
         const img = new Image();
-        img.onload = () => {
-            processCapturedImage(img);
-        };
+        img.onload = () => processCapturedImage(img);
         img.src = e.target.result;
     };
     reader.readAsDataURL(file);
 }
 
-// Process the captured image (resize/crop logic)
 async function processCapturedImage(img) {
     try {
-        // Determine orientation and dimensions
-        const width = img.width;
-        const height = img.height;
-        
         const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = img.width;
+        canvas.height = img.height;
         const ctx = canvas.getContext('2d');
-        
-        // Draw original
         ctx.drawImage(img, 0, 0);
         
-        // Get initial Data URL
         let imageDataUrl = canvas.toDataURL('image/jpeg', 0.95);
 
-        // Correct Orientation (using EXIF if available in the file)
         try {
             imageDataUrl = await correctImageOrientation(imageDataUrl);
-        } catch (e) {
-            console.warn('Orientation correction skipped or failed', e);
-        }
+        } catch (e) {}
 
-        // Crop to 16:9 / 9:16 Aspect Ratio (Optional, but keeps consistency)
         try {
             imageDataUrl = await cropToAspectRatio(imageDataUrl);
-        } catch (e) {
-            console.warn('Cropping failed', e);
-        }
+        } catch (e) {}
 
         appState.capturedPhotoDataUrl = imageDataUrl;
-
-        // Update UI to show Form
         elements.cameraSection.classList.add('hidden');
         elements.formSection.classList.remove('hidden');
-        
-        // Update GPS display in form if we have it
         updateFormGpsDisplay();
 
     } catch (error) {
-        console.error('Error processing image:', error);
-        showStatus('Error al procesar la foto.', 'error');
+        console.error(error);
+        showStatus('Error al procesar.', 'error');
     }
 }
 
-// Function to crop an image to a specific aspect ratio (16:9 or 9:16)
 function cropToAspectRatio(imageDataUrl) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
-            const originalWidth = img.width;
-            const originalHeight = img.height;
-            const isPortrait = originalHeight > originalWidth;
-            const targetAspectRatio = isPortrait ? 9 / 16 : 16 / 9;
-            const originalAspectRatio = originalWidth / originalHeight;
+            const ow = img.width, oh = img.height;
+            const targetRatio = (oh > ow) ? 9/16 : 16/9;
+            const currentRatio = ow / oh;
 
-            if (Math.abs(originalAspectRatio - targetAspectRatio) < 0.01) {
-                resolve(imageDataUrl);
-                return;
+            if (Math.abs(currentRatio - targetRatio) < 0.01) {
+                resolve(imageDataUrl); return;
             }
 
-            let sx, sy, sWidth, sHeight;
-
-            if (originalAspectRatio > targetAspectRatio) {
-                sHeight = originalHeight;
-                sWidth = originalHeight * targetAspectRatio;
-                sx = (originalWidth - sWidth) / 2;
-                sy = 0;
+            let sx, sy, sw, sh;
+            if (currentRatio > targetRatio) {
+                sh = oh; sw = oh * targetRatio; sx = (ow - sw)/2; sy = 0;
             } else {
-                sWidth = originalWidth;
-                sHeight = originalWidth / targetAspectRatio;
-                sx = 0;
-                sy = (originalHeight - sHeight) / 2;
+                sw = ow; sh = ow / targetRatio; sx = 0; sy = (oh - sh)/2;
             }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = sWidth;
-            canvas.height = sHeight;
-            const ctx = canvas.getContext('2d');
-
-            ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-            resolve(canvas.toDataURL('image/jpeg', 0.95));
+            const cvs = document.createElement('canvas');
+            cvs.width = sw; cvs.height = sh;
+            cvs.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+            resolve(cvs.toDataURL('image/jpeg', 0.95));
         };
-        img.onerror = () => reject(new Error('Error loading image for cropping'));
+        img.onerror = reject;
         img.src = imageDataUrl;
     });
 }
 
-// GPS System
 function startGpsSystem() {
-    const gpsDisplay = document.getElementById('gps-coords'); // Form input
-    
     if (!navigator.geolocation) {
-        showStatus('Geolocalización no soportada.', 'error');
-        if(elements.gpsStatus) elements.gpsStatus.textContent = 'GPS no soportado';
-        elements.takePhotoBtn.disabled = false; // Allow anyway
+        if(elements.gpsStatus) elements.gpsStatus.textContent = 'Sin GPS';
+        elements.takePhotoBtn.disabled = false;
         return;
     }
 
-    // Initial get
     navigator.geolocation.getCurrentPosition(
-        (position) => {
-            updateLocationState(position);
-            elements.takePhotoBtn.disabled = false; // Enable button
-            showStatus('Ubicación obtenida.', 'success');
-        },
-        (error) => {
-            handleGpsError(error);
-            elements.takePhotoBtn.disabled = false; // Allow anyway
-        },
+        (pos) => { updateLocationState(pos); elements.takePhotoBtn.disabled = false; },
+        (err) => { handleGpsError(err); elements.takePhotoBtn.disabled = false; },
         { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 }
     );
 
-    // Watcher
     appState.locationWatcher = navigator.geolocation.watchPosition(
-        (position) => updateLocationState(position),
-        (error) => console.warn('GPS Watch error:', error.message),
+        updateLocationState,
+        (e) => console.warn(e.message),
         { enableHighAccuracy: true, timeout: 30000, maximumAge: 10000 }
     );
 }
 
 function updateLocationState(position) {
-    const newPosition = {
+    const newPos = {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         accuracy: position.coords.accuracy,
-        altitude: position.coords.altitude,
-        altitudeAccuracy: position.coords.altitudeAccuracy,
-        heading: position.coords.heading,
-        speed: position.coords.speed,
         timestamp: position.timestamp
     };
-
-    appState.currentLocation = newPosition;
-
-    // Keep best accuracy
-    if (!appState.bestLocation || (newPosition.accuracy && newPosition.accuracy < appState.bestLocation.accuracy)) {
-        appState.bestLocation = { ...newPosition };
+    appState.currentLocation = newPos;
+    if (!appState.bestLocation || (newPos.accuracy < appState.bestLocation.accuracy)) {
+        appState.bestLocation = { ...newPos };
     }
-
-    // Update UI
     if (elements.gpsStatus) {
         elements.gpsStatus.textContent = `GPS: ±${Math.round(appState.bestLocation.accuracy)}m`;
-        elements.gpsStatus.style.color = '#28a745'; // Green
+        elements.gpsStatus.style.color = '#28a745';
     }
-    
     updateFormGpsDisplay();
 }
 
 function updateFormGpsDisplay() {
-    const gpsDisplay = document.getElementById('gps-coords');
-    if (gpsDisplay && appState.bestLocation && !appState.isFormInteractionActive) {
-        gpsDisplay.value = `${appState.bestLocation.latitude.toFixed(7)}, ${appState.bestLocation.longitude.toFixed(7)} (±${Math.round(appState.bestLocation.accuracy)}m)`;
+    const display = document.getElementById('gps-coords');
+    if (display && appState.bestLocation && !appState.isFormInteractionActive) {
+        display.value = `${appState.bestLocation.latitude.toFixed(7)}, ${appState.bestLocation.longitude.toFixed(7)}`;
     }
 }
 
 function handleGpsError(error) {
-    console.warn('GPS Error:', error.message);
-    let msg = 'Esperando GPS...';
-    if (error.code === error.PERMISSION_DENIED) msg = 'Permiso GPS denegado';
     if (elements.gpsStatus) {
-        elements.gpsStatus.textContent = msg;
-        elements.gpsStatus.style.color = '#dc3545'; // Red
+        elements.gpsStatus.textContent = 'Error GPS';
+        elements.gpsStatus.style.color = '#dc3545';
     }
 }
 
-// Save Metadata Handler
 function handleSaveMetadata() {
-    const workFrontSelect = document.getElementById('work-front');
-    let workFront = workFrontSelect.value;
-    const coronation = document.getElementById('coronation').value;
-    const activityPerformed = document.getElementById('activity-performed').value;
-    const observationCategory = document.getElementById('observation-category').value;
+    const workFront = document.getElementById('work-front').value === 'otro' ? 
+                      elements.otherWorkFrontInput.value.trim() : 
+                      document.getElementById('work-front').value;
     
-    if (workFront === 'otro') {
-        workFront = elements.otherWorkFrontInput.value.trim();
-        if (!workFront) {
-            showStatus('Especifique el frente de trabajo.', 'error');
-            return;
-        }
-    } else if (!workFront || !coronation || !observationCategory) {
-        showStatus('Complete el formulario.', 'error');
-        return;
+    if (!workFront || !document.getElementById('coronation').value || !document.getElementById('observation-category').value) {
+        showStatus('Complete el formulario.', 'error'); return;
     }
-    
-    const bestLocationForMetadata = appState.bestLocation || appState.currentLocation;
     
     const metadata = {
         workFront,
-        coronation,
-        activityPerformed,
-        observationCategory,
-        location: bestLocationForMetadata,
+        coronation: document.getElementById('coronation').value,
+        activityPerformed: document.getElementById('activity-performed').value,
+        observationCategory: document.getElementById('observation-category').value,
+        location: appState.bestLocation || appState.currentLocation,
         timestamp: new Date().toLocaleString()
     };
 
-    // Persistence
-    localStorage.setItem('gdrCamFormData', JSON.stringify({workFront, coronation, observationCategory, activityPerformed}));
+    localStorage.setItem('gdrCamFormData', JSON.stringify(metadata));
     
-    elements.saveMetadataBtn.innerHTML = '<span class="loading"></span> Procesando...';
+    elements.saveMetadataBtn.innerHTML = '<span class="loading"></span> Guardando...';
     elements.saveMetadataBtn.disabled = true;
     
-    addMetadataToImage(appState.capturedPhotoDataUrl, metadata);
+    addMetadataAndSave(appState.capturedPhotoDataUrl, metadata);
 }
 
 function handleSaveWithoutForm() {
-    const bestLocationForMetadata = appState.bestLocation || appState.currentLocation;
     const metadata = {
-        location: bestLocationForMetadata,
+        location: appState.bestLocation || appState.currentLocation,
         timestamp: new Date().toLocaleString()
     };
     
-    elements.saveWithoutFormBtn.innerHTML = '<span class="loading"></span>...';
+    elements.saveWithoutFormBtn.innerHTML = '<span class="loading"></span> Guardando...';
     elements.saveWithoutFormBtn.disabled = true;
     
-    addMetadataToImage(appState.capturedPhotoDataUrl, metadata);
+    addMetadataAndSave(appState.capturedPhotoDataUrl, metadata);
 }
 
-// Metadata Integration (EXIF)
-async function addMetadataToImage(imageDataUrl, metadata) {
+async function addMetadataAndSave(imageDataUrl, metadata) {
     try {
-        let exifObj;
+        let exifObj = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "thumbnail": null};
         
-        if (typeof piexif !== 'undefined') {
-            // Initialize clean EXIF
-            exifObj = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "thumbnail": null};
-            
-            // Add User Comment (JSON data)
-            if (metadata.workFront) {
-                const jsonStr = JSON.stringify(metadata);
-                const userComment = "ASCII\0" + jsonStr;
-                exifObj["Exif"][piexif.ExifIFD.UserComment] = userComment;
-            }
-
-            // Add GPS
-            if (metadata.location) {
-                const lat = metadata.location.latitude;
-                const lng = metadata.location.longitude;
-                const latRef = lat >= 0 ? "N" : "S";
-                const lngRef = lng >= 0 ? "E" : "W";
-                const absLat = Math.abs(lat);
-                const absLng = Math.abs(lng);
-                
-                const latDeg = Math.floor(absLat);
-                const latMin = Math.floor((absLat - latDeg) * 60);
-                const latSec = ((absLat - latDeg) * 60 - latMin) * 60;
-                
-                const lngDeg = Math.floor(absLng);
-                const lngMin = Math.floor((absLng - lngDeg) * 60);
-                const lngSec = ((absLng - lngDeg) * 60 - lngMin) * 60;
-
-                exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = latRef;
-                exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = [[latDeg, 1], [latMin, 1], [Math.round(latSec * 10000), 10000]];
-                exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lngRef;
-                exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = [[lngDeg, 1], [lngMin, 1], [Math.round(lngSec * 10000), 10000]];
-                
-                // Date stamp
-                 const now = new Date();
-                 const gpsDate = now.getFullYear() + ":" + String(now.getMonth()+1).padStart(2,'0') + ":" + String(now.getDate()).padStart(2,'0');
-                 exifObj["GPS"][piexif.GPSIFD.GPSDateStamp] = gpsDate;
-            }
-
-            // Add DateTimeOriginal
-            const now = new Date();
-            const dateTimeOriginal = now.getFullYear() + ":" + 
-                String(now.getMonth() + 1).padStart(2, '0') + ":" + 
-                String(now.getDate()).padStart(2, '0') + " " +
-                String(now.getHours()).padStart(2, '0') + ":" + 
-                String(now.getMinutes()).padStart(2, '0') + ":" + 
-                String(now.getSeconds()).padStart(2, '0');
-            exifObj["Exif"][piexif.ExifIFD.DateTimeOriginal] = dateTimeOriginal;
-            exifObj["0th"][piexif.ImageIFD.DateTime] = dateTimeOriginal;
-
-            // Create image with EXIF
-            const exifBytes = piexif.dump(exifObj);
-            const imageWithExif = piexif.insert(exifBytes, imageDataUrl);
-            
-            appState.photoWithMetadata = imageWithExif;
-            appState.originalPhotoWithMetadata = imageWithExif;
-            elements.photoPreview.src = imageWithExif;
-            
-            // Auto rotate -90 per request
-            await rotateImage(-90);
-            
-            // Show result
-            elements.formSection.classList.add('hidden');
-            elements.resultSection.classList.remove('hidden');
-            showStatus('Metadatos guardados.', 'success');
-
-        } else {
-             throw new Error("Librería piexif no cargada");
+        // Basic EXIF injection (UserComment + GPS)
+        if (metadata.workFront) {
+            exifObj["Exif"][piexif.ExifIFD.UserComment] = "ASCII\0" + JSON.stringify(metadata);
         }
+        
+        if (metadata.location) {
+            const lat = metadata.location.latitude;
+            const lng = metadata.location.longitude;
+            exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+            exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = piexif.GPSHelper.degToDmsRational(lat);
+            exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+            exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = piexif.GPSHelper.degToDmsRational(lng);
+        }
+
+        const now = new Date();
+        const dateStr = now.getFullYear() + ":" + 
+            String(now.getMonth() + 1).padStart(2, '0') + ":" + 
+            String(now.getDate()).padStart(2, '0') + " " +
+            String(now.getHours()).padStart(2, '0') + ":" + 
+            String(now.getMinutes()).padStart(2, '0') + ":" + 
+            String(now.getSeconds()).padStart(2, '0');
+        
+        exifObj["Exif"][piexif.ExifIFD.DateTimeOriginal] = dateStr;
+
+        const exifBytes = piexif.dump(exifObj);
+        const imageWithExif = piexif.insert(exifBytes, imageDataUrl);
+        
+        appState.photoWithMetadata = imageWithExif;
+        appState.originalPhotoWithMetadata = imageWithExif;
+        elements.photoPreview.src = imageWithExif;
+        
+        await rotateImage(-90); // Standard rotation logic
+
+        // SAVE TO DB AUTOMATICALLY
+        await savePhotoToDB(appState.photoWithMetadata, metadata);
+        
+        elements.formSection.classList.add('hidden');
+        elements.resultSection.classList.remove('hidden');
+        showStatus('Guardado en Galería.', 'success');
+
     } catch (err) {
         console.error(err);
-        showStatus('Error al guardar metadatos: ' + err.message, 'error');
+        showStatus('Error: ' + err.message, 'error');
     } finally {
-         if (elements.saveMetadataBtn) {
-            elements.saveMetadataBtn.innerHTML = 'Guardar Foto con Metadatos';
-            elements.saveMetadataBtn.disabled = false;
-        }
-        if (elements.saveWithoutFormBtn) {
-            elements.saveWithoutFormBtn.innerHTML = 'Guardar Foto sin Formulario';
-            elements.saveWithoutFormBtn.disabled = false;
-        }
+        resetButtons();
     }
 }
 
-// Rotation Logic
+function resetButtons() {
+    if(elements.saveMetadataBtn) { elements.saveMetadataBtn.innerHTML = 'Guardar Foto con Metadatos'; elements.saveMetadataBtn.disabled = false; }
+    if(elements.saveWithoutFormBtn) { elements.saveWithoutFormBtn.innerHTML = 'Guardar Foto sin Formulario'; elements.saveWithoutFormBtn.disabled = false; }
+}
+
 async function rotateImage(angle) {
     if (!appState.photoWithMetadata) return;
 
@@ -513,11 +609,9 @@ async function rotateImage(angle) {
         const ctx = canvas.getContext('2d');
 
         if (Math.abs(angle) === 90 || Math.abs(angle) === 270) {
-            canvas.width = img.height;
-            canvas.height = img.width;
+            canvas.width = img.height; canvas.height = img.width;
         } else {
-            canvas.width = img.width;
-            canvas.height = img.height;
+            canvas.width = img.width; canvas.height = img.height;
         }
 
         ctx.save();
@@ -532,47 +626,41 @@ async function rotateImage(angle) {
         
         elements.photoPreview.src = imageWithExif;
         appState.photoWithMetadata = imageWithExif;
-        
-        appState.imageRotation = (appState.imageRotation + angle) % 360;
     };
     img.src = appState.photoWithMetadata;
 }
 
-// Download Handler
 async function handleDownload() {
     if (!appState.photoWithMetadata) return;
-    elements.downloadPhotoBtn.innerHTML = '<span class="loading"></span> Guardando...';
+    elements.downloadPhotoBtn.innerHTML = '<span class="loading"></span>...';
     elements.downloadPhotoBtn.disabled = true;
 
-    // Add visible timestamp/logo before saving
     const imageToSave = await addTimestampAndLogoToImage(appState.photoWithMetadata);
-
-    const link = document.createElement('a');
-    link.download = `GDR-CAM-${new Date().getTime()}.jpg`;
-    link.href = imageToSave;
-    link.click();
+    saveAs(dataURLtoBlob(imageToSave), `GDR-CAM-${new Date().getTime()}.jpg`);
     
-    showStatus('Guardado.', 'success');
     elements.downloadPhotoBtn.innerHTML = 'Guardar en Galería';
     elements.downloadPhotoBtn.disabled = false;
 }
 
-// Helper: Add visible overlay
+// Helper to convert DataURL to Blob for FileSaver
+function dataURLtoBlob(dataurl) {
+    var arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
+        bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
+    while(n--){ u8arr[n] = bstr.charCodeAt(n); }
+    return new Blob([u8arr], {type:mime});
+}
+
 function addTimestampAndLogoToImage(imageUrl) {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = function() {
             const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
+            canvas.width = img.width; canvas.height = img.height;
             const ctx = canvas.getContext('2d');
-            
             ctx.drawImage(img, 0, 0);
             
-            // Load existing EXIF to preserve it
             const exifObj = piexif.load(imageUrl);
             
-            // Overlay Logic
             const fontSize = Math.max(20, Math.floor(canvas.height * 0.03));
             const padding = fontSize / 2;
             ctx.font = `bold ${fontSize}px Arial`;
@@ -581,27 +669,23 @@ function addTimestampAndLogoToImage(imageUrl) {
             const timestamp = new Date().toLocaleString();
             let gpsText = "Sin GPS";
             
-            // Try to get coords from EXIF for display
-            // (Simplified logic for brevity, assuming we put them there)
-             if (exifObj.GPS && exifObj.GPS[piexif.GPSIFD.GPSLatitude]) {
-                 // Just display what we have in state as it's easier than parsing back from EXIF bytes for the overlay
-                 const loc = appState.bestLocation || appState.currentLocation;
-                 if (loc) {
-                     gpsText = `${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)} (±${Math.round(loc.accuracy)}m)`;
-                 }
-             }
+            // Try to decode user comment for display
+            if (exifObj.Exif && exifObj.Exif[piexif.ExifIFD.UserComment]) {
+                // Could parse metadata from here if needed
+            }
 
-            // Draw North Arrow (Bottom Center)
+            // Use current state location if available for simplicity, or try to parse EXIF
+            // For this implementation, we'll stick to simple visual
+            const loc = appState.bestLocation;
+            if (loc) gpsText = `${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}`;
+
             ctx.textAlign = 'center';
-            ctx.fillStyle = 'white';
-            ctx.strokeStyle = 'black';
-            ctx.lineWidth = 3;
+            ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 3;
             ctx.strokeText('⬆ N', canvas.width / 2, canvas.height - padding - fontSize);
             ctx.fillText('⬆ N', canvas.width / 2, canvas.height - padding - fontSize);
             ctx.strokeText(gpsText, canvas.width / 2, canvas.height - padding);
             ctx.fillText(gpsText, canvas.width / 2, canvas.height - padding);
             
-            // Draw Timestamp (Bottom Right)
             ctx.textAlign = 'right';
             ctx.strokeText(timestamp, canvas.width - padding, canvas.height - padding);
             ctx.fillText(timestamp, canvas.width - padding, canvas.height - padding);
@@ -614,22 +698,14 @@ function addTimestampAndLogoToImage(imageUrl) {
     });
 }
 
-// New Capture
 function newCapture() {
     elements.resultSection.classList.add('hidden');
     elements.cameraSection.classList.remove('hidden');
-    elements.takePhotoBtn.disabled = false;
-    
-    // Reset state
-    appState.capturedPhotoDataUrl = null;
-    appState.photoWithMetadata = null;
-    elements.photoPreview.src = '';
-    elements.cameraInput.value = ''; // Clear input
-    
+    elements.cameraInput.value = '';
     loadPersistentData();
+    loadGallery(); // Refresh gallery view
 }
 
-// Searchable Select Helper
 function setupSearchableSelect() {
     const searchInput = elements.workFrontSearch;
     const optionsContainer = elements.workFrontOptions;
@@ -678,45 +754,6 @@ function populateWorkFrontOptions() {
     });
 }
 
-// Helper: Orientation Correction
-function correctImageOrientation(imageDataUrl) {
-    return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = function() {
-            EXIF.getData(img, function() {
-                const orientation = EXIF.getTag(this, "Orientation");
-                if (!orientation || orientation === 1) {
-                    resolve(imageDataUrl);
-                    return;
-                }
-                
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                let { width, height } = img;
-                
-                if (orientation > 4) { [width, height] = [height, width]; }
-                
-                canvas.width = width;
-                canvas.height = height;
-                
-                switch (orientation) {
-                    case 2: ctx.transform(-1, 0, 0, 1, width, 0); break;
-                    case 3: ctx.transform(-1, 0, 0, -1, width, height); break;
-                    case 4: ctx.transform(1, 0, 0, -1, 0, height); break;
-                    case 5: ctx.transform(0, 1, 1, 0, 0, 0); break;
-                    case 6: ctx.transform(0, 1, -1, 0, height, 0); break;
-                    case 7: ctx.transform(0, -1, -1, 0, height, width); break;
-                    case 8: ctx.transform(0, -1, 1, 0, 0, width); break;
-                }
-                
-                ctx.drawImage(img, 0, 0);
-                resolve(canvas.toDataURL('image/jpeg', 0.92));
-            });
-        };
-        img.src = imageDataUrl;
-    });
-}
-
 function setupFormInteractionLogic() {
     const inputs = document.querySelectorAll('#form-section input, #form-section select, #form-section textarea');
     inputs.forEach(i => {
@@ -734,7 +771,7 @@ function setupMetadataModal() {
     btn.addEventListener('click', () => {
         if (!appState.photoWithMetadata) return;
         const exif = piexif.load(appState.photoWithMetadata);
-        display.textContent = JSON.stringify(exif, null, 2); // Simplified for brevity
+        display.textContent = JSON.stringify(exif, null, 2);
         modal.classList.remove('hidden');
     });
     
@@ -749,6 +786,12 @@ function showStatus(msg, type) {
     el.classList.remove('hidden');
     setTimeout(() => el.classList.add('hidden'), 3000);
 }
+
+// Load styles regarding styles.css
+const link = document.createElement('link');
+link.rel = 'stylesheet';
+link.href = 'style.css';
+document.head.appendChild(link);
 
 // Init
 window.addEventListener('DOMContentLoaded', init);

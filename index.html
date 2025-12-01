@@ -19,22 +19,22 @@
     <div class="container-fluid">
         <header class="header">
             <img src="img/LOGO GDR.jpeg" alt="GDR Logo" class="logo">
-            <h1>CAM-TEST-V0</h1>
+            <h1>CAM-TEST-V1.0</h1>
         </header>
         
         <main class="main-content">
             <div id="camera-section">
-                <div class="video-container">
-                    <video id="video" autoplay playsinline></video>
-                    <canvas id="canvas" width="640" height="480"></canvas>  
+                <div class="camera-placeholder">
+                    <i class="fas fa-camera fa-5x"></i>
+                    <p>Presione el botón para abrir la cámara</p>
+                    <div id="gps-status">Esperando GPS...</div>
                 </div>
                 
-                <div class="controls">
-                    <button id="flash-toggle" class="control-btn" disabled><i class="fas fa-bolt"></i> <span id="flash-mode-text" class="flash-text"></span></button>
-                    <button id="zoom-in" class="control-btn" disabled><i class="fas fa-search-plus"></i></button>
-                    <button id="zoom-out" class="control-btn" disabled><i class="fas fa-search-minus"></i></button>
-                    <span id="zoom-level" class="zoom-level">1x</span>
-                    <button id="take-photo" class="control-btn" disabled><i class="fas fa-circle"></i></button>
+                <!-- Input oculto para activar la cámara nativa -->
+                <input type="file" id="camera-input" accept="image/*" capture="environment" hidden>
+
+                <div class="controls native-controls">
+                    <button id="take-photo" class="control-btn big-btn" disabled><i class="fas fa-camera"></i> ABRIR CÁMARA</button>
                 </div>
             </div>
             
@@ -127,5 +127,18 @@
     <script src="exif.js"></script>
     <script src="piexif.js"></script>
     <script src="app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then((registration) => {
+              console.log('Service Worker registered with scope:', registration.scope);
+            })
+            .catch((error) => {
+              console.log('Service Worker registration failed:', error);
+            });
+        });
+      }
+    </script>
 </body>
 </html>

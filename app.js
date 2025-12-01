@@ -1,4 +1,4 @@
-// GDR-CAM Application Logic - Native Camera + Gallery Version
+// GDR-CAM Application Logic - Native Camera + Gallery Version + Enhanced Metadata
 
 // Application state
 const appState = {
@@ -477,6 +477,10 @@ function updateLocationState(position) {
         latitude: position.coords.latitude,
         longitude: position.coords.longitude,
         accuracy: position.coords.accuracy,
+        altitude: position.coords.altitude,
+        altitudeAccuracy: position.coords.altitudeAccuracy,
+        heading: position.coords.heading,
+        speed: position.coords.speed,
         timestamp: position.timestamp
     };
     appState.currentLocation = newPos;
@@ -542,49 +546,139 @@ function handleSaveWithoutForm() {
     addMetadataAndSave(appState.capturedPhotoDataUrl, metadata);
 }
 
+// --- ENHANCED METADATA LOGIC FROM ADAPTED CODE ---
 async function addMetadataAndSave(imageDataUrl, metadata) {
+    console.log("Starting addMetadataAndSave with enhanced logic");
+
     try {
-        let exifObj = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "thumbnail": null};
+        const imageWithExifOnly = imageDataUrl; 
         
-        // Basic EXIF injection (UserComment + GPS)
-        if (metadata.workFront) {
-            exifObj["Exif"][piexif.ExifIFD.UserComment] = "ASCII\0" + JSON.stringify(metadata);
+        if (typeof piexif !== 'undefined' && piexif.dump) {
+            let exifObj = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "thumbnail": null};
+            
+            // 1. Enhanced UserComment Encoding
+            if (metadata.workFront || metadata.coronation || metadata.activityPerformed || metadata.observationCategory) {
+                let userComment;
+                if (piexif.helper && piexif.helper.encodeToUnicode) {
+                    try {
+                        userComment = piexif.helper.encodeToUnicode(JSON.stringify(metadata));
+                    } catch (encodingError) {
+                        console.warn("Unicode encoding failed, using fallback:", encodingError);
+                        userComment = "ASCII\0" + JSON.stringify(metadata);
+                    }
+                } else {
+                    userComment = "ASCII\0" + JSON.stringify(metadata);
+                }
+                exifObj["Exif"][piexif.ExifIFD.UserComment] = userComment;
+            }
+
+            // 2. Enhanced GPS Data
+            if (metadata.location) {
+                console.log("Adding GPS data with enhanced precision...");
+                const lat = metadata.location.latitude;
+                const lng = metadata.location.longitude;
+                
+                const latRef = lat >= 0 ? "N" : "S";
+                const lngRef = lng >= 0 ? "E" : "W";
+                const absLat = Math.abs(lat);
+                const absLng = Math.abs(lng);
+
+                // High precision calculation matching app22.js
+                const latDeg = Math.floor(absLat);
+                const latMinDecimal = (absLat - latDeg) * 60;
+                const latMin = Math.floor(latMinDecimal);
+                const latSec = (latMinDecimal - latMin) * 60;
+                
+                const lngDeg = Math.floor(absLng);
+                const lngMinDecimal = (absLng - lngDeg) * 60;
+                const lngMin = Math.floor(lngMinDecimal);
+                const lngSec = (lngMinDecimal - lngMin) * 60;
+
+                exifObj["GPS"] = {
+                    [piexif.GPSIFD.GPSVersionID]: [2, 2, 0, 0],
+                    [piexif.GPSIFD.GPSLatitudeRef]: latRef,
+                    [piexif.GPSIFD.GPSLatitude]: [
+                        [Math.round(latDeg), 1], 
+                        [Math.round(latMin), 1], 
+                        [Math.round(latSec * 1000000), 1000000]
+                    ],
+                    [piexif.GPSIFD.GPSLongitudeRef]: lngRef,
+                    [piexif.GPSIFD.GPSLongitude]: [
+                        [Math.round(lngDeg), 1], 
+                        [Math.round(lngMin), 1], 
+                        [Math.round(lngSec * 1000000), 1000000]
+                    ]
+                };
+
+                // Altitude
+                if (metadata.location.altitude !== null && metadata.location.altitude !== undefined) {
+                    const alt = Math.abs(metadata.location.altitude);
+                    const altRef = metadata.location.altitude >= 0 ? 0 : 1;
+                    exifObj["GPS"][piexif.GPSIFD.GPSAltitudeRef] = altRef;
+                    exifObj["GPS"][piexif.GPSIFD.GPSAltitude] = [Math.round(alt * 1000000), 1000000];
+                }
+
+                // Accuracy (DOP)
+                if (metadata.location.accuracy !== undefined) {
+                    const accuracy = metadata.location.accuracy;
+                    exifObj["GPS"][piexif.GPSIFD.GPSDOP] = [Math.round(accuracy * 100), 100];
+                }
+
+                // Speed
+                if (metadata.location.speed !== null && metadata.location.speed !== undefined) {
+                    exifObj["GPS"][piexif.GPSIFD.GPSSpeedRef] = "K";
+                    const speedKmh = metadata.location.speed * 3.6;
+                    exifObj["GPS"][piexif.GPSIFD.GPSSpeed] = [Math.round(speedKmh * 1000000), 1000000];
+                }
+
+                // Date Stamp
+                if (metadata.location.timestamp) {
+                    const date = new Date(metadata.location.timestamp);
+                    const gpsDate = date.getFullYear() + ":" + 
+                        String(date.getMonth() + 1).padStart(2, '0') + ":" + 
+                        String(date.getDate()).padStart(2, '0');
+                    
+                    exifObj["GPS"][piexif.GPSIFD.GPSDateStamp] = gpsDate;
+                    
+                    exifObj["GPS"][piexif.GPSIFD.GPSTimeStamp] = [
+                        [date.getHours(), 1],
+                        [date.getMinutes(), 1],
+                        [date.getSeconds(), 1]
+                    ];
+                }
+            }
+
+            const now = new Date();
+            const dateStr = now.getFullYear() + ":" + 
+                String(now.getMonth() + 1).padStart(2, '0') + ":" + 
+                String(now.getDate()).padStart(2, '0') + " " +
+                String(now.getHours()).padStart(2, '0') + ":" + 
+                String(now.getMinutes()).padStart(2, '0') + ":" + 
+                String(now.getSeconds()).padStart(2, '0');
+            
+            exifObj["Exif"][piexif.ExifIFD.DateTimeOriginal] = dateStr;
+            exifObj["0th"][piexif.ImageIFD.DateTime] = dateStr;
+
+            const exifBytes = piexif.dump(exifObj);
+            const imageWithExif = piexif.insert(exifBytes, imageWithExifOnly);
+            
+            appState.photoWithMetadata = imageWithExif;
+            appState.originalPhotoWithMetadata = imageWithExif;
+            elements.photoPreview.src = imageWithExif;
+            
+            // Auto rotate 90 degrees LEFT per requirement
+            await rotateImage(-90); 
+
+            // SAVE TO DB AUTOMATICALLY
+            await savePhotoToDB(appState.photoWithMetadata, metadata);
+            
+            elements.formSection.classList.add('hidden');
+            elements.resultSection.classList.remove('hidden');
+            showStatus('¡Foto guardada en Galería!', 'success');
+
+        } else {
+            throw new Error("Librería piexif no disponible");
         }
-        
-        if (metadata.location) {
-            const lat = metadata.location.latitude;
-            const lng = metadata.location.longitude;
-            exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-            exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = piexif.GPSHelper.degToDmsRational(lat);
-            exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-            exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = piexif.GPSHelper.degToDmsRational(lng);
-        }
-
-        const now = new Date();
-        const dateStr = now.getFullYear() + ":" + 
-            String(now.getMonth() + 1).padStart(2, '0') + ":" + 
-            String(now.getDate()).padStart(2, '0') + " " +
-            String(now.getHours()).padStart(2, '0') + ":" + 
-            String(now.getMinutes()).padStart(2, '0') + ":" + 
-            String(now.getSeconds()).padStart(2, '0');
-        
-        exifObj["Exif"][piexif.ExifIFD.DateTimeOriginal] = dateStr;
-
-        const exifBytes = piexif.dump(exifObj);
-        const imageWithExif = piexif.insert(exifBytes, imageDataUrl);
-        
-        appState.photoWithMetadata = imageWithExif;
-        appState.originalPhotoWithMetadata = imageWithExif;
-        elements.photoPreview.src = imageWithExif;
-        
-        await rotateImage(-90); // Standard rotation logic
-
-        // SAVE TO DB AUTOMATICALLY
-        await savePhotoToDB(appState.photoWithMetadata, metadata);
-        
-        elements.formSection.classList.add('hidden');
-        elements.resultSection.classList.remove('hidden');
-        showStatus('Guardado en Galería.', 'success');
 
     } catch (err) {
         console.error(err);
@@ -650,50 +744,119 @@ function dataURLtoBlob(dataurl) {
     return new Blob([u8arr], {type:mime});
 }
 
+// --- ENHANCED OVERLAY LOGIC FROM ADAPTED CODE ---
 function addTimestampAndLogoToImage(imageUrl) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = function() {
             const canvas = document.createElement('canvas');
-            canvas.width = img.width; canvas.height = img.height;
             const ctx = canvas.getContext('2d');
+            
+            canvas.width = img.width;
+            canvas.height = img.height;
+            
+            // Draw the image on the canvas
             ctx.drawImage(img, 0, 0);
             
+            // Load existing EXIF to preserve it
             const exifObj = piexif.load(imageUrl);
             
-            const fontSize = Math.max(20, Math.floor(canvas.height * 0.03));
-            const padding = fontSize / 2;
-            ctx.font = `bold ${fontSize}px Arial`;
-            ctx.textBaseline = 'bottom';
-            
-            const timestamp = new Date().toLocaleString();
-            let gpsText = "Sin GPS";
-            
-            // Try to decode user comment for display
-            if (exifObj.Exif && exifObj.Exif[piexif.ExifIFD.UserComment]) {
-                // Could parse metadata from here if needed
-            }
+            const drawOverlays = () => {
+                const canvasWidth = canvas.width;
+                const canvasHeight = canvas.height;
+                const padding = Math.min(25, canvasWidth * 0.02, canvasHeight * 0.02); 
 
-            // Use current state location if available for simplicity, or try to parse EXIF
-            // For this implementation, we'll stick to simple visual
-            const loc = appState.bestLocation;
-            if (loc) gpsText = `${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}`;
+                // Draw north direction indicator (Bottom Center)
+                const fontSize = Math.min(80, Math.max(20, Math.floor(canvasHeight * 0.04))); 
+                ctx.font = `bold ${fontSize}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'bottom';
 
-            ctx.textAlign = 'center';
-            ctx.fillStyle = 'white'; ctx.strokeStyle = 'black'; ctx.lineWidth = 3;
-            ctx.strokeText('⬆ N', canvas.width / 2, canvas.height - padding - fontSize);
-            ctx.fillText('⬆ N', canvas.width / 2, canvas.height - padding - fontSize);
-            ctx.strokeText(gpsText, canvas.width / 2, canvas.height - padding);
-            ctx.fillText(gpsText, canvas.width / 2, canvas.height - padding);
+                const centerX = canvasWidth / 2;
+                const northY = canvasHeight - padding;
+                
+                // Extract GPS data from EXIF if available
+                let gpsInfo = 'N'; 
+                
+                if (exifObj.GPS) {
+                    let lat = null, lng = null;
+                    let latRef = null, lngRef = null;
+                    
+                    if (exifObj.GPS[piexif.GPSIFD.GPSLatitude]) {
+                        const gpsLat = exifObj.GPS[piexif.GPSIFD.GPSLatitude];
+                        if (Array.isArray(gpsLat) && gpsLat.length === 3) {
+                            const deg = gpsLat[0][0] / gpsLat[0][1];
+                            const min = gpsLat[1][0] / gpsLat[1][1];
+                            const sec = gpsLat[2][0] / gpsLat[2][1];
+                            lat = deg + (min / 60) + (sec / 3600);
+                        }
+                    }
+                    
+                    if (exifObj.GPS[piexif.GPSIFD.GPSLongitude]) {
+                        const gpsLng = exifObj.GPS[piexif.GPSIFD.GPSLongitude];
+                        if (Array.isArray(gpsLng) && gpsLng.length === 3) {
+                            const deg = gpsLng[0][0] / gpsLng[0][1];
+                            const min = gpsLng[1][0] / gpsLng[1][1];
+                            const sec = gpsLng[2][0] / gpsLng[2][1];
+                            lng = deg + (min / 60) + (sec / 3600);
+                        }
+                    }
+                    
+                    latRef = exifObj.GPS[piexif.GPSIFD.GPSLatitudeRef];
+                    lngRef = exifObj.GPS[piexif.GPSIFD.GPSLongitudeRef];
+                    
+                    if (lat !== null && lng !== null && latRef && lngRef) {
+                        gpsInfo = `N ${Math.abs(lat).toFixed(6)}° ${latRef}, ${Math.abs(lng).toFixed(6)}° ${lngRef}`;
+                        
+                        if (exifObj.GPS[piexif.GPSIFD.GPSDOP]) {
+                            const dop = exifObj.GPS[piexif.GPSIFD.GPSDOP];
+                            if (Array.isArray(dop) && dop[1] !== 0) {
+                                const accuracy = (dop[0] / dop[1]).toFixed(1);
+                                gpsInfo += ` (±${accuracy}m)`;
+                            }
+                        }
+                    }
+                }
+                
+                // Draw North Arrow
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+                ctx.fillStyle = 'white';
+                ctx.strokeText('⬆', centerX, northY - fontSize * 0.8);
+                ctx.fillText('⬆', centerX, northY - fontSize * 0.8);
+                
+                // Draw GPS info
+                ctx.strokeText(gpsInfo, centerX, northY);
+                ctx.fillText(gpsInfo, centerX, northY);
+                
+                // Draw Timestamp (Bottom Right)
+                const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
+                    ? exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
+                    : new Date().toLocaleString();
+
+                ctx.textAlign = 'right';
+                const timestampX = canvasWidth - padding;
+                const timestampY = canvasHeight - padding;
+                
+                ctx.strokeText(timestamp, timestampX, timestampY);
+                ctx.fillText(timestamp, timestampX, timestampY);
+
+                const imageWithText = canvas.toDataURL('image/jpeg', 0.92);
+                
+                // Re-insert EXIF
+                const exifBytes = piexif.dump(exifObj);
+                const imageWithExif = piexif.insert(exifBytes, imageWithText);
+                
+                resolve(imageWithExif);
+            };
             
-            ctx.textAlign = 'right';
-            ctx.strokeText(timestamp, canvas.width - padding, canvas.height - padding);
-            ctx.fillText(timestamp, canvas.width - padding, canvas.height - padding);
-
-            const finalImage = canvas.toDataURL('image/jpeg', 0.92);
-            const exifBytes = piexif.dump(exifObj);
-            resolve(piexif.insert(exifBytes, finalImage));
+            drawOverlays();
         };
+        
+        img.onerror = function() {
+            reject(new Error('Error loading image'));
+        };
+        
         img.src = imageUrl;
     });
 }

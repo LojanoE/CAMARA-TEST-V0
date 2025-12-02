@@ -222,53 +222,81 @@ async function downloadSelectedPhotos() {
     if (checkboxes.length === 0) return;
 
     elements.downloadSelectedBtn.disabled = true;
+    const originalBtnText = '<i class="fas fa-download"></i> Descargar';
     
-    const transaction = appState.db.transaction(['photos'], 'readonly');
-    const store = transaction.objectStore('photos');
-    
-    let processed = 0;
     const total = checkboxes.length;
+    let processed = 0;
 
-    showStatus(`Iniciando descarga de ${total} fotos...`, 'info');
-
-    // Process sequentially to prevent browser choking and ensure order
-    for (const cb of checkboxes) {
-        elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${processed + 1}/${total}`;
+    if (total === 1) {
+        // Single file: Direct download (existing behavior)
+        showStatus(`Descargando foto...`, 'info');
+        const cb = checkboxes[0];
         
-        await new Promise((resolve) => {
-            const request = store.get(Number(cb.dataset.id));
+        try {
+            const item = await getPhotoFromDB(Number(cb.dataset.id));
+            if (item) {
+                const finalImage = await addTimestampAndLogoToImage(item.image);
+                const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
+                saveAs(dataURLtoBlob(finalImage), filename);
+                showStatus('Descarga completada.', 'success');
+            }
+        } catch (e) {
+            console.error("Error downloading single photo:", e);
+            showStatus('Error al descargar la imagen.', 'error');
+        }
+    } else {
+        // Multiple files: ZIP Archive
+        showStatus(`Procesando ${total} fotos para ZIP...`, 'info');
+        const zip = new JSZip();
+        
+        for (const cb of checkboxes) {
+            elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${processed + 1}/${total}`;
             
-            request.onsuccess = async () => {
-                const item = request.result;
+            try {
+                const item = await getPhotoFromDB(Number(cb.dataset.id));
                 if (item) {
-                    try {
-                        // Add overlay before downloading
-                        const finalImage = await addTimestampAndLogoToImage(item.image);
-                        const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                        const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
-                        
-                        // Trigger download
-                        saveAs(dataURLtoBlob(finalImage), filename);
-                    } catch (e) {
-                        console.error("Error preparando imagen:", e);
-                    }
+                    const finalImage = await addTimestampAndLogoToImage(item.image);
+                    const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
+                    
+                    // Remove Data URL prefix for JSZip
+                    const base64Data = finalImage.split(',')[1];
+                    zip.file(filename, base64Data, {base64: true});
                 }
-                // Small delay to allow the browser to handle the download event
-                setTimeout(resolve, 500);
-            };
-            
-            request.onerror = (e) => {
-                console.error("Error DB:", e);
-                resolve(); // Continue even if one fails
-            };
-        });
-        
-        processed++;
+            } catch (e) {
+                console.error("Error processing photo for ZIP:", e);
+            }
+            processed++;
+        }
+
+        elements.downloadSelectedBtn.innerHTML = 'Generando ZIP...';
+        showStatus('Comprimiendo archivo...', 'info');
+
+        try {
+            const content = await zip.generateAsync({type:"blob"});
+            const zipName = `GDR_CAM_Pack_${new Date().getTime()}.zip`;
+            saveAs(content, zipName);
+            showStatus('ZIP descargado correctamente.', 'success');
+        } catch (e) {
+            console.error("Error generating ZIP:", e);
+            showStatus('Error al crear el archivo ZIP.', 'error');
+        }
     }
 
-    showStatus('Descargas completadas.', 'success');
-    elements.downloadSelectedBtn.innerHTML = '<i class="fas fa-download"></i> Descargar';
+    elements.downloadSelectedBtn.innerHTML = originalBtnText;
     elements.downloadSelectedBtn.disabled = false;
+}
+
+function getPhotoFromDB(id) {
+    return new Promise((resolve, reject) => {
+        if (!appState.db) return reject("Database not initialized");
+        const transaction = appState.db.transaction(['photos'], 'readonly');
+        const store = transaction.objectStore('photos');
+        const request = store.get(id);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = (e) => reject(e);
+    });
 }
 
 function updateGalleryButtons() {

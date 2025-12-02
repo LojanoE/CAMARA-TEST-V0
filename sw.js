@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v3-smart'; // Incrementamos versión
+const CACHE_NAME = 'cam-test-v4-offline-fix'; // Incrementamos versión
 const ASSETS = [
   './',
   './index.html',
@@ -6,6 +6,8 @@ const ASSETS = [
   './app.js',
   './exif.js',
   './piexif.js',
+  './jszip.min.js',
+  './FileSaver.min.js',
   './frentes.json',
   './manifest.json',
   './img/icon-512x512.png',

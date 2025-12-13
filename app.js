@@ -247,12 +247,21 @@ async function downloadSelectedPhotos() {
         }
     } else {
         // Multiple files: ZIP Archive
-        showStatus(`Procesando ${total} fotos para ZIP...`, 'info');
+        showStatus(`Preparando ${total} fotos...`, 'info');
         const zip = new JSZip();
         
-        for (const cb of checkboxes) {
+        // Convert NodeList to Array to use indexed access if needed, though for..of is fine
+        const checkboxArray = Array.from(checkboxes);
+
+        for (let i = 0; i < checkboxArray.length; i++) {
+            const cb = checkboxArray[i];
+            
+            // Update UI
             elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${processed + 1}/${total}`;
             
+            // Yield to main thread to allow UI update and prevent freezing
+            await new Promise(resolve => setTimeout(resolve, 50));
+
             try {
                 const item = await getPhotoFromDB(Number(cb.dataset.id));
                 if (item) {
@@ -260,9 +269,9 @@ async function downloadSelectedPhotos() {
                     const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                     const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
                     
-                    // Remove Data URL prefix for JSZip
-                    const base64Data = finalImage.split(',')[1];
-                    zip.file(filename, base64Data, {base64: true});
+                    // Optimization: Convert to Blob immediately to avoid huge base64 strings in memory
+                    const blob = dataURLtoBlob(finalImage);
+                    zip.file(filename, blob);
                 }
             } catch (e) {
                 console.error("Error processing photo for ZIP:", e);
@@ -271,16 +280,29 @@ async function downloadSelectedPhotos() {
         }
 
         elements.downloadSelectedBtn.innerHTML = 'Generando ZIP...';
-        showStatus('Comprimiendo archivo...', 'info');
+        showStatus('Empaquetando archivo...', 'info');
+
+        // Yield again before the heavy zip generation
+        await new Promise(resolve => setTimeout(resolve, 100));
 
         try {
-            const content = await zip.generateAsync({type:"blob"});
+            // Use compression: "STORE" because JPEGs are already compressed. 
+            // "DEFLATE" wastes CPU/Memory for <1% gain and causes crashes on mobile.
+            const content = await zip.generateAsync({
+                type: "blob", 
+                compression: "STORE" 
+            }, (metadata) => {
+                if(metadata.percent) {
+                    elements.downloadSelectedBtn.innerHTML = `ZIP: ${metadata.percent.toFixed(0)}%`;
+                }
+            });
+
             const zipName = `GDR_CAM_Pack_${new Date().getTime()}.zip`;
             saveAs(content, zipName);
             showStatus('ZIP descargado correctamente.', 'success');
         } catch (e) {
             console.error("Error generating ZIP:", e);
-            showStatus('Error al crear el archivo ZIP.', 'error');
+            showStatus('Error al crear el ZIP. Intente con menos fotos.', 'error');
         }
     }
 

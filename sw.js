@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v10-offline-fix'; // Incrementamos versión
+const CACHE_NAME = 'cam-test-v11-offline-fix'; // Incrementamos versión
 const ASSETS = [
   './',
   './index.html',

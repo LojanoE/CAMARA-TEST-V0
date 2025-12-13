@@ -1,5 +1,28 @@
 // GDR-CAM Application Logic - Native Camera + Gallery Version + Enhanced Metadata
 
+// Create a Web Worker instance for image processing
+const imageProcessorWorker = new Worker('./imageProcessorWorker.js');
+
+// Store Promises for ongoing worker tasks
+const workerPromises = new Map();
+
+imageProcessorWorker.onmessage = (event) => {
+    const { id, processedBlob, error } = event.data;
+    if (workerPromises.has(id)) {
+        if (processedBlob) {
+            workerPromises.get(id).resolve(processedBlob);
+        } else if (error) {
+            workerPromises.get(id).reject(new Error(error));
+        }
+        workerPromises.delete(id);
+    }
+};
+
+imageProcessorWorker.onerror = (error) => {
+    console.error("Web Worker error:", error);
+    showStatus('Error en el procesamiento de imágenes en segundo plano.', 'error');
+};
+
 // Application state
 const appState = {
     capturedPhotoDataUrl: null,
@@ -139,31 +162,92 @@ function savePhotoToDB(photoDataUrl, metadata) {
     });
 }
 
-function loadGallery() {
+// Pagination State
+appState.galleryCursor = null; // To store the last cursor key if needed, or simply count
+appState.itemsLoaded = 0;
+const ITEMS_PER_PAGE = 20;
+
+function loadGallery(reset = true) {
     if (!appState.db) return;
+
+    if (reset) {
+        elements.galleryGrid.innerHTML = '';
+        appState.itemsLoaded = 0;
+        // Remove existing "Load More" button if any
+        const existingBtn = document.getElementById('load-more-btn');
+        if (existingBtn) existingBtn.remove();
+    }
 
     const transaction = appState.db.transaction(['photos'], 'readonly');
     const store = transaction.objectStore('photos');
     const index = store.index('timestamp');
     const request = index.openCursor(null, 'prev'); // Newest first
 
-    elements.galleryGrid.innerHTML = '';
-    let count = 0;
+    let advanced = false;
+    let countInBatch = 0;
+    
+    // We need to skip items we've already loaded. 
+    // IndexedDB openCursor doesn't support 'offset' directly easily without advance(), 
+    // but advance() can be slow for huge lists. 
+    // For now, simple advance() is fine for < 1000 items.
 
     request.onsuccess = (event) => {
         const cursor = event.target.result;
-        if (cursor) {
-            renderGalleryItem(cursor.value);
-            count++;
-            cursor.continue();
-        } else {
-            elements.galleryCount.textContent = count;
-            if (count === 0) {
+        
+        if (!cursor) {
+            // End of list
+            if (appState.itemsLoaded === 0) {
                 elements.galleryGrid.innerHTML = '<p class="empty-msg">No hay fotos guardadas aún.</p>';
             }
+            const existingBtn = document.getElementById('load-more-btn');
+            if (existingBtn) existingBtn.style.display = 'none';
+            elements.galleryCount.textContent = appState.itemsLoaded;
+            updateGalleryButtons();
+            return;
+        }
+
+        if (reset && !advanced && appState.itemsLoaded > 0) {
+           // Should not happen if logic is correct, reset sets itemsLoaded to 0
+        }
+
+        // Check if we need to skip items (simple pagination logic)
+        // Note: For better performance with huge lists, we should use key ranges, 
+        // but skipping logical index is okay for this scale.
+        if (appState.itemsLoaded > 0 && !advanced) {
+             cursor.advance(appState.itemsLoaded);
+             advanced = true;
+             return;
+        }
+
+        if (countInBatch < ITEMS_PER_PAGE) {
+            renderGalleryItem(cursor.value);
+            countInBatch++;
+            appState.itemsLoaded++;
+            cursor.continue();
+        } else {
+            // Batch limit reached
+            createLoadMoreButton();
+            elements.galleryCount.textContent = appState.itemsLoaded + '+'; // Indicate more
             updateGalleryButtons();
         }
     };
+}
+
+function createLoadMoreButton() {
+    let btn = document.getElementById('load-more-btn');
+    if (!btn) {
+        btn = document.createElement('button');
+        btn.id = 'load-more-btn';
+        btn.className = 'btn secondary full-width'; // Reuse existing styles
+        btn.innerHTML = '<i class="fas fa-plus"></i> Cargar más fotos';
+        btn.style.marginTop = '20px';
+        btn.style.gridColumn = '1 / -1'; // Span full width in grid
+        btn.onclick = () => {
+            btn.remove(); // Remove self before loading more
+            loadGallery(false); // Load next batch
+        };
+        elements.galleryGrid.after(btn); // Place after the grid
+    }
 }
 
 function renderGalleryItem(item) {
@@ -226,6 +310,7 @@ async function downloadSelectedPhotos() {
     
     const total = checkboxes.length;
     let processed = 0;
+    let errors = 0;
 
     if (total === 1) {
         // Single file: Direct download (existing behavior)
@@ -235,7 +320,8 @@ async function downloadSelectedPhotos() {
         try {
             const item = await getPhotoFromDB(Number(cb.dataset.id));
             if (item) {
-                const finalImage = await addTimestampAndLogoToImage(item.image);
+                // For single download, process on main thread for simplicity
+                const finalImage = await addTimestampAndLogoToImage(item.image); 
                 const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                 const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
                 saveAs(dataURLtoBlob(finalImage), filename);
@@ -246,48 +332,58 @@ async function downloadSelectedPhotos() {
             showStatus('Error al descargar la imagen.', 'error');
         }
     } else {
-        // Multiple files: ZIP Archive
-        showStatus(`Preparando ${total} fotos...`, 'info');
+        // Multiple files: ZIP Archive, use Web Worker SEQUENTIALLY
+        showStatus(`Iniciando descarga de ${total} fotos...`, 'info');
         const zip = new JSZip();
-        
-        // Convert NodeList to Array to use indexed access if needed, though for..of is fine
         const checkboxArray = Array.from(checkboxes);
 
         for (let i = 0; i < checkboxArray.length; i++) {
             const cb = checkboxArray[i];
-            
+            const currentPhotoId = Number(cb.dataset.id);
+
             // Update UI
-            elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${processed + 1}/${total}`;
+            const percentage = Math.round(((i) / total) * 100);
+            elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${i + 1}/${total} (${percentage}%)`;
             
-            // Yield to main thread to allow UI update and prevent freezing
+            // Yield to main thread to ensure UI updates
             await new Promise(resolve => setTimeout(resolve, 50));
 
             try {
-                const item = await getPhotoFromDB(Number(cb.dataset.id));
+                const item = await getPhotoFromDB(currentPhotoId);
                 if (item) {
-                    const finalImage = await addTimestampAndLogoToImage(item.image);
                     const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                     const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
+
+                    // Process SINGLE photo via Worker
+                    const processedBlob = await processImageInWorker(currentPhotoId, item.image);
                     
-                    // Optimization: Convert to Blob immediately to avoid huge base64 strings in memory
-                    const blob = dataURLtoBlob(finalImage);
-                    zip.file(filename, blob);
+                    if (processedBlob) {
+                        zip.file(filename, processedBlob);
+                        processed++;
+                    } else {
+                        console.error(`Failed to process photo ${currentPhotoId}`);
+                        errors++;
+                    }
                 }
             } catch (e) {
-                console.error("Error processing photo for ZIP:", e);
+                console.error(`Error processing photo ${currentPhotoId}:`, e);
+                errors++;
             }
-            processed++;
         }
 
-        elements.downloadSelectedBtn.innerHTML = 'Generando ZIP...';
-        showStatus('Empaquetando archivo...', 'info');
+        if (processed === 0) {
+            showStatus('No se pudieron procesar las fotos.', 'error');
+            elements.downloadSelectedBtn.innerHTML = originalBtnText;
+            elements.downloadSelectedBtn.disabled = false;
+            return;
+        }
 
-        // Yield again before the heavy zip generation
-        await new Promise(resolve => setTimeout(resolve, 100));
+        elements.downloadSelectedBtn.innerHTML = 'Comprimiendo ZIP...';
+        showStatus('Generando archivo ZIP final...', 'info');
+
+        await new Promise(resolve => setTimeout(resolve, 100)); // Final yield
 
         try {
-            // Use compression: "STORE" because JPEGs are already compressed. 
-            // "DEFLATE" wastes CPU/Memory for <1% gain and causes crashes on mobile.
             const content = await zip.generateAsync({
                 type: "blob", 
                 compression: "STORE" 
@@ -299,15 +395,39 @@ async function downloadSelectedPhotos() {
 
             const zipName = `GDR_CAM_Pack_${new Date().getTime()}.zip`;
             saveAs(content, zipName);
-            showStatus('ZIP descargado correctamente.', 'success');
+            
+            if (errors > 0) {
+                showStatus(`Descarga con advertencias: ${processed} ok, ${errors} fallos.`, 'warning');
+            } else {
+                showStatus('ZIP descargado correctamente.', 'success');
+            }
         } catch (e) {
             console.error("Error generating ZIP:", e);
-            showStatus('Error al crear el ZIP. Intente con menos fotos.', 'error');
+            showStatus('Error al crear el ZIP.', 'error');
         }
     }
 
     elements.downloadSelectedBtn.innerHTML = originalBtnText;
     elements.downloadSelectedBtn.disabled = false;
+}
+
+// Wrapper to handle Worker communication as a Promise with Timeout
+function processImageInWorker(id, imageDataUrl) {
+    return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+            if (workerPromises.has(id)) {
+                workerPromises.delete(id);
+                reject(new Error("Worker timed out"));
+            }
+        }, 15000); // 15 second timeout per image
+
+        workerPromises.set(id, { 
+            resolve: (blob) => { clearTimeout(timeout); resolve(blob); },
+            reject: (err) => { clearTimeout(timeout); reject(err); }
+        });
+
+        imageProcessorWorker.postMessage({ id, imageDataUrl });
+    });
 }
 
 function getPhotoFromDB(id) {
@@ -787,6 +907,7 @@ async function handleDownload() {
 }
 
 // Helper to convert DataURL to Blob for FileSaver
+// Kept globally as it's a utility function used by both main thread and implicitly by worker's logic.
 function dataURLtoBlob(dataurl) {
     var arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
         bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
@@ -795,11 +916,13 @@ function dataURLtoBlob(dataurl) {
 }
 
 // --- ENHANCED OVERLAY LOGIC FROM ADAPTED CODE ---
+// This function remains in app.js for single photo download and immediate preview.
+// For bulk downloads, the worker version will be used.
 function addTimestampAndLogoToImage(imageUrl) {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = function() {
-            const canvas = document.createElement('canvas');
+            const canvas = document.createElement('canvas'); // Use standard canvas on main thread
             const ctx = canvas.getContext('2d');
             
             canvas.width = img.width;
@@ -816,16 +939,14 @@ function addTimestampAndLogoToImage(imageUrl) {
                 const canvasHeight = canvas.height;
                 const padding = Math.min(25, canvasWidth * 0.02, canvasHeight * 0.02); 
 
-                // Draw north direction indicator (Bottom Center)
                 const fontSize = Math.min(80, Math.max(20, Math.floor(canvasHeight * 0.04))); 
                 ctx.font = `bold ${fontSize}px Arial`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'bottom';
 
                 const centerX = canvasWidth / 2;
-                const northY = canvasHeight - padding;
+                const northY = canvasHeight - fontSize * 0.8; 
                 
-                // Extract GPS data from EXIF if available
                 let gpsInfo = 'N'; 
                 
                 if (exifObj.GPS) {
@@ -868,18 +989,15 @@ function addTimestampAndLogoToImage(imageUrl) {
                     }
                 }
                 
-                // Draw North Arrow
-                ctx.strokeStyle = 'black';
-                ctx.lineWidth = 2;
                 ctx.fillStyle = 'white';
-                ctx.strokeText('⬆', centerX, northY - fontSize * 0.8);
-                ctx.fillText('⬆', centerX, northY - fontSize * 0.8);
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = Math.max(1, fontSize / 20); // Dynamic line width
+                ctx.strokeText('⬆', centerX, northY - padding);
+                ctx.fillText('⬆', centerX, northY + padding);
                 
-                // Draw GPS info
                 ctx.strokeText(gpsInfo, centerX, northY);
                 ctx.fillText(gpsInfo, centerX, northY);
                 
-                // Draw Timestamp (Bottom Right)
                 const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
                     ? exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
                     : new Date().toLocaleString();
@@ -893,7 +1011,6 @@ function addTimestampAndLogoToImage(imageUrl) {
 
                 const imageWithText = canvas.toDataURL('image/jpeg', 0.92);
                 
-                // Re-insert EXIF
                 const exifBytes = piexif.dump(exifObj);
                 const imageWithExif = piexif.insert(exifBytes, imageWithText);
                 

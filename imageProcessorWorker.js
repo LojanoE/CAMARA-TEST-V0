@@ -71,7 +71,14 @@ async function addTimestampAndLogoToImage(imageUrl) {
                 ctx.textBaseline = 'bottom';
 
                 const centerX = canvasWidth / 2;
-                const northY = canvasHeight - fontSize * 0.8;
+                
+                // Position calculations
+                // 1. Coordinates at the bottom with padding
+                const coordsY = canvasHeight - padding;
+                
+                // 2. Arrow above the coordinates
+                // Shift up by fontSize + padding
+                const arrowY = coordsY - fontSize - (padding / 2);
 
                 // Extract GPS data from EXIF if available
                 let gpsInfo = 'N'; 
@@ -120,12 +127,12 @@ async function addTimestampAndLogoToImage(imageUrl) {
                 ctx.fillStyle = 'white';
                 ctx.strokeStyle = 'black';
                 ctx.lineWidth = Math.max(1, fontSize / 20); 
-                ctx.strokeText('⬆', centerX, northY - padding);
-                ctx.fillText('⬆', centerX, northY - padding); // Corrected: was + padding in app.js old version, but logic here seems consistent
+                ctx.strokeText('⬆', centerX, arrowY);
+                ctx.fillText('⬆', centerX, arrowY);
                 
                 // Draw GPS info
-                ctx.strokeText(gpsInfo, centerX, northY + padding);
-                ctx.fillText(gpsInfo, centerX, northY + padding);
+                ctx.strokeText(gpsInfo, centerX, coordsY);
+                ctx.fillText(gpsInfo, centerX, coordsY);
                 
                 // Draw Timestamp (Bottom Right)
                 const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 

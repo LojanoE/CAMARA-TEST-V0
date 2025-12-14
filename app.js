@@ -945,7 +945,10 @@ function addTimestampAndLogoToImage(imageUrl) {
                 ctx.textBaseline = 'bottom';
 
                 const centerX = canvasWidth / 2;
-                const northY = canvasHeight - fontSize * 0.8; 
+                // Position for GPS coordinates (bottom)
+                const coordsY = canvasHeight - fontSize * 0.8;
+                // Position for Arrow (above coordinates)
+                const arrowY = coordsY - fontSize - (padding / 2);
                 
                 let gpsInfo = 'N'; 
                 
@@ -992,11 +995,14 @@ function addTimestampAndLogoToImage(imageUrl) {
                 ctx.fillStyle = 'white';
                 ctx.strokeStyle = 'black';
                 ctx.lineWidth = Math.max(1, fontSize / 20); // Dynamic line width
-                ctx.strokeText('⬆', centerX, northY - padding);
-                ctx.fillText('⬆', centerX, northY + padding);
                 
-                ctx.strokeText(gpsInfo, centerX, northY);
-                ctx.fillText(gpsInfo, centerX, northY);
+                // Draw Arrow
+                ctx.strokeText('⬆', centerX, arrowY);
+                ctx.fillText('⬆', centerX, arrowY);
+                
+                // Draw GPS Info
+                ctx.strokeText(gpsInfo, centerX, coordsY);
+                ctx.fillText(gpsInfo, centerX, coordsY);
                 
                 const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
                     ? exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 

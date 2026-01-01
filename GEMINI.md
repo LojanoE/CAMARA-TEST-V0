@@ -37,7 +37,7 @@ This is a client-side only web application (Static Web App) built with vanilla H
     *   **Cache First** for slow connections (2G) or offline mode.
     *   **Offline Assets:** Explicitly caches `jszip.min.js`, `FileSaver.min.js`, and `piexif.js`.
 *   **`manifest.json`**: Web App Manifest for PWA installation (icons, theme colors, name).
-*   **`frentes.json`**: A JSON array containing predefined "Work Front" (Frente de Trabajo) options.
+*   **`frentes.json`**: A JSON object containing two arrays: `frentes` (Work Fronts) and `actividades` (Activities). Used to populate the searchable dropdown and the activity checklist dynamically.
 *   **`exif.js` / `piexif.js`**: Libraries used for reading and writing EXIF data in JPEG images.
 *   **`jszip.min.js` / `FileSaver.min.js`**: Local copies of libraries for offline ZIP generation and file saving.
 
@@ -85,6 +85,7 @@ Since this is a static site, "deployment" simply consists of uploading the files
 *   **Gallery Pagination:** "Load More" functionality to efficiently handle large numbers of stored photos.
 *   **Image Rotation:** Built-in tools to rotate images before saving.
 *   **Searchable Dropdown:** Enhanced UX for selecting "Work Fronts" from a large list.
+*   **Multi-select Activities:** Users can select multiple "Activities" from a checklist, including an "Other" option with custom text input. Selections are saved as a comma-separated string in the metadata.
 
 ## Conventions
 

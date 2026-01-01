@@ -1,4 +1,5 @@
-[
+{
+  "frentes": [
     "FBC 6",
     "FBC 4",
     "Dren Basal",
@@ -11,7 +12,7 @@
     "P905 Cuerpo principal (C980 Subsec 2)",
     "P870 Cuerpo principal (C980 Subsec 3)",
     "P860 Cuerpo principal (C980 Subsec 3)",
-    "P865 Cuerpo principal (C980 Subsec 3)",    
+    "P865 Cuerpo principal (C980 Subsec 3)",
     "P821 Cuerpo principal (C980 Subsec 2)",
     "P805 Cuerpo principal (C980 Subsec 2)",
     "P955 EI (C980 Subsecuencia 2)",
@@ -36,4 +37,19 @@
     "P845 Cuerpo principal (C980 Subsecuencia 3)",
     "Dren Inclinado - Estribo izquierdo",
     "P845 EI (C980 Subsecuencia 3)"
-]
+  ],
+  "actividades": [
+    "Z1 Relleno",
+    "Z1 Descarga",
+    "Z1 Tendido y compactación",
+    "Z3",
+    "Z6",
+    "GTI",
+    "GTS",
+    "Perfilado talud aguas abajo",
+    "Perfilado talud aguas arriba",
+    "Descarga de relaves",
+    "Descarga de material saturado",
+    "Preparación de Fundación"
+  ]
+}

@@ -68,7 +68,7 @@ const elements = {
 };
 
 // Initialize the application
-function init() {
+async function init() {
     // Get DOM elements
     elements.cameraInput = document.getElementById('camera-input');
     elements.canvas = document.createElement('canvas');
@@ -96,7 +96,7 @@ function init() {
     elements.deleteSelectedBtn = document.getElementById('delete-selected-btn');
     elements.galleryCount = document.getElementById('gallery-count');
     
-    loadWorkFronts();
+    await loadWorkFronts();
     loadPersistentData();
     attachEventListeners();
     initDB(); // Initialize Database
@@ -459,11 +459,19 @@ async function loadWorkFronts() {
     try {
         const response = await fetch('frentes.json');
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const workFronts = await response.json();
+        const data = await response.json();
         
+        // Handle both old array format and new object format
+        const workFronts = Array.isArray(data) ? data : data.frentes;
+        const activities = Array.isArray(data) ? [] : (data.actividades || []);
+
         const workFrontSelect = document.getElementById('work-front');
         const otherOption = workFrontSelect.querySelector('option[value="otro"]');
         
+        // Clear existing options except 'otro' and default
+        const optionsToRemove = Array.from(workFrontSelect.options).filter(opt => opt.value !== "" && opt.value !== "otro");
+        optionsToRemove.forEach(opt => opt.remove());
+
         workFronts.forEach(front => {
             const option = document.createElement('option');
             option.value = front;
@@ -472,9 +480,63 @@ async function loadWorkFronts() {
         });
 
         populateWorkFrontOptions();
+        populateActivityList(activities);
     } catch (error) {
         console.error('Could not load work fronts:', error);
     }
+}
+
+function populateActivityList(activities) {
+    const container = document.getElementById('activity-list');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    activities.forEach(activity => {
+        const div = createActivityItem(activity, activity);
+        container.appendChild(div);
+    });
+
+    // Add "Otra" option
+    const otherDiv = createActivityItem('Otra', 'otra-activity');
+    container.appendChild(otherDiv);
+
+    // Setup listener for "Otra"
+    const otherCheckbox = otherDiv.querySelector('input');
+    const otherInputGroup = document.getElementById('other-activity-group');
+    
+    otherCheckbox.addEventListener('change', () => {
+        if (otherCheckbox.checked) {
+            otherInputGroup.classList.remove('hidden');
+        } else {
+            otherInputGroup.classList.add('hidden');
+        }
+    });
+}
+
+function createActivityItem(labelText, value) {
+    const div = document.createElement('div');
+    div.className = 'activity-item';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.value = value;
+    checkbox.id = `act-${value.replace(/\s+/g, '-').toLowerCase()}`;
+    
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    
+    div.appendChild(checkbox);
+    div.appendChild(span);
+    
+    // Make the whole div clickable
+    div.addEventListener('click', (e) => {
+        if (e.target !== checkbox) {
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    });
+    
+    return div;
 }
 
 function loadPersistentData() {
@@ -498,7 +560,36 @@ function loadPersistentData() {
             }
             document.getElementById('coronation').value = formData.coronation || '';
             document.getElementById('observation-category').value = formData.observationCategory || '';
-            document.getElementById('activity-performed').value = formData.activityPerformed || '';
+            
+            // Restore activities
+            if (formData.activityPerformed) {
+                const savedActivitiesStr = formData.activityPerformed;
+                const allCheckboxes = Array.from(document.querySelectorAll('#activity-list input[type="checkbox"]'));
+                const savedParts = savedActivitiesStr.split(', ').map(s => s.trim());
+                
+                let foundCustom = false;
+                let customText = [];
+
+                savedParts.forEach(part => {
+                    const cb = allCheckboxes.find(c => c.value === part && c.value !== 'otra-activity');
+                    if (cb) {
+                        cb.checked = true;
+                    } else {
+                        // If it's not a standard activity, it's likely custom
+                        foundCustom = true;
+                        customText.push(part);
+                    }
+                });
+
+                if (foundCustom) {
+                    const otherCb = document.querySelector('input[value="otra-activity"]');
+                    if (otherCb) {
+                        otherCb.checked = true;
+                        document.getElementById('other-activity-group').classList.remove('hidden');
+                        document.getElementById('other-activity').value = customText.join(', ');
+                    }
+                }
+            }
         }
     } catch (e) {
         console.error("Error loading form data:", e);
@@ -683,6 +774,21 @@ function handleSaveMetadata() {
                       elements.otherWorkFrontInput.value.trim() : 
                       document.getElementById('work-front').value;
     
+    // Get selected activities
+    const checkboxes = document.querySelectorAll('#activity-list input[type="checkbox"]:checked');
+    let selectedActivities = [];
+    
+    checkboxes.forEach(cb => {
+        if (cb.value === 'otra-activity') {
+            const customText = document.getElementById('other-activity').value.trim();
+            if (customText) {
+                selectedActivities.push(customText);
+            }
+        } else {
+            selectedActivities.push(cb.value);
+        }
+    });
+    
     if (!workFront || !document.getElementById('coronation').value || !document.getElementById('observation-category').value) {
         showStatus('Complete el formulario.', 'error'); return;
     }
@@ -690,7 +796,7 @@ function handleSaveMetadata() {
     const metadata = {
         workFront,
         coronation: document.getElementById('coronation').value,
-        activityPerformed: document.getElementById('activity-performed').value,
+        activityPerformed: selectedActivities.join(', '),
         observationCategory: document.getElementById('observation-category').value,
         location: appState.bestLocation || appState.currentLocation,
         timestamp: new Date().toLocaleString()

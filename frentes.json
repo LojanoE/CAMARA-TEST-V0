@@ -26,7 +26,7 @@
     "P845 EI (C980 Subsecuencia 2)",
     "P870 C970",
     "Vaso del DRT",
-    "Instituto Yanzen",
+    "Instituto Yangtsé",
     "Escombrera del hombro derecho",
     "Escombrera del hombro izquierdo",
     "Cuenco disipador",
@@ -41,15 +41,19 @@
   "actividades": [
     "Z1 Relleno",
     "Z1 Descarga",
+    "Z1 Descarga en zona de acopio",
     "Z1 Tendido y compactación",
+    "Z2",
     "Z3",
     "Z6",
+    "Z6 Esclerómetro ",
     "GTI",
     "GTS",
     "Perfilado talud aguas abajo",
     "Perfilado talud aguas arriba",
     "Descarga de relaves",
     "Descarga de material saturado",
+    "Fundación",
     "Preparación de Fundación"
   ]
 }

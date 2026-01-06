@@ -802,7 +802,10 @@ function handleSaveMetadata() {
         timestamp: new Date().toLocaleString()
     };
 
-    localStorage.setItem('gdrCamFormData', JSON.stringify(metadata));
+    // Guardar datos para la siguiente captura (EXCLUYENDO actividades)
+    const dataToPersist = { ...metadata };
+    delete dataToPersist.activityPerformed;
+    localStorage.setItem('gdrCamFormData', JSON.stringify(dataToPersist));
     
     elements.saveMetadataBtn.innerHTML = '<span class="loading"></span> Guardando...';
     elements.saveMetadataBtn.disabled = true;
@@ -1144,6 +1147,14 @@ function newCapture() {
     elements.resultSection.classList.add('hidden');
     elements.cameraSection.classList.remove('hidden');
     elements.cameraInput.value = '';
+
+    // Limpiar selección de actividades y campo "otro"
+    document.querySelectorAll('#activity-list input[type="checkbox"]').forEach(cb => cb.checked = false);
+    const otherActivityInput = document.getElementById('other-activity');
+    if (otherActivityInput) otherActivityInput.value = '';
+    const otherActivityGroup = document.getElementById('other-activity-group');
+    if (otherActivityGroup) otherActivityGroup.classList.add('hidden');
+
     loadPersistentData();
     loadGallery(); // Refresh gallery view
 }

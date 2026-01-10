@@ -135,7 +135,7 @@ function initDB() {
 
 function savePhotoToDB(photoDataUrl, metadata) {
     return new Promise((resolve, reject) => {
-        if (!appState.db) return reject('DB not initialized');
+        if (!appState.db) return reject(new Error('Base de datos no lista. Recargue la página.'));
 
         const transaction = appState.db.transaction(['photos'], 'readwrite');
         const store = transaction.objectStore('photos');
@@ -149,15 +149,31 @@ function savePhotoToDB(photoDataUrl, metadata) {
 
         const request = store.add(photoRecord);
 
-        request.onsuccess = () => {
-            console.log('Photo saved to DB');
+        transaction.oncomplete = () => {
+            console.log('Transaction completed: Photo saved.');
             resolve();
             loadGallery(); // Refresh gallery
         };
 
-        request.onerror = (e) => {
-            console.error('Error saving to DB', e);
-            reject(e);
+        transaction.onerror = (event) => {
+            const error = event.target.error;
+            console.error('Transaction error:', error);
+            if (error && (error.name === 'QuotaExceededError' || error.name === 'QuotaExceededError')) {
+                reject(new Error('¡Memoria llena! Elimine fotos de la galería.'));
+            } else {
+                reject(new Error('Error de guardado: ' + (error ? error.message : 'Desconocido')));
+            }
+        };
+
+        request.onerror = (event) => {
+            // This usually bubbles to transaction.onerror, but we catch it here too just in case
+            const error = event.target.error;
+            console.error('Request error:', error);
+            if (error && (error.name === 'QuotaExceededError' || error.name === 'QuotaExceededError')) {
+                reject(new Error('¡Memoria llena! Elimine fotos de la galería.'));
+            } else {
+                reject(new Error('Error al añadir foto: ' + (error ? error.message : 'Desconocido')));
+            }
         };
     });
 }
@@ -961,7 +977,8 @@ async function addMetadataAndSave(imageDataUrl, metadata) {
 
     } catch (err) {
         console.error(err);
-        showStatus('Error: ' + err.message, 'error');
+        const msg = err.message || (typeof err === 'string' ? err : 'Error desconocido al guardar');
+        showStatus('Error: ' + msg, 'error');
     } finally {
         resetButtons();
     }
@@ -972,35 +989,44 @@ function resetButtons() {
     if(elements.saveWithoutFormBtn) { elements.saveWithoutFormBtn.innerHTML = 'Guardar Foto sin Formulario'; elements.saveWithoutFormBtn.disabled = false; }
 }
 
-async function rotateImage(angle) {
-    if (!appState.photoWithMetadata) return;
+function rotateImage(angle) {
+    return new Promise((resolve, reject) => {
+        if (!appState.photoWithMetadata) return resolve();
 
-    const img = new Image();
-    img.onload = function() {
-        const exifObj = piexif.load(appState.photoWithMetadata);
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
+        const img = new Image();
+        img.onload = function() {
+            try {
+                const exifObj = piexif.load(appState.photoWithMetadata);
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
 
-        if (Math.abs(angle) === 90 || Math.abs(angle) === 270) {
-            canvas.width = img.height; canvas.height = img.width;
-        } else {
-            canvas.width = img.width; canvas.height = img.height;
-        }
+                if (Math.abs(angle) === 90 || Math.abs(angle) === 270) {
+                    canvas.width = img.height; canvas.height = img.width;
+                } else {
+                    canvas.width = img.width; canvas.height = img.height;
+                }
 
-        ctx.save();
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate(angle * Math.PI / 180);
-        ctx.drawImage(img, -img.width / 2, -img.height / 2);
-        ctx.restore();
+                ctx.save();
+                ctx.translate(canvas.width / 2, canvas.height / 2);
+                ctx.rotate(angle * Math.PI / 180);
+                ctx.drawImage(img, -img.width / 2, -img.height / 2);
+                ctx.restore();
 
-        const rotatedImage = canvas.toDataURL('image/jpeg', 0.92);
-        const exifBytes = piexif.dump(exifObj);
-        const imageWithExif = piexif.insert(exifBytes, rotatedImage);
-        
-        elements.photoPreview.src = imageWithExif;
-        appState.photoWithMetadata = imageWithExif;
-    };
-    img.src = appState.photoWithMetadata;
+                const rotatedImage = canvas.toDataURL('image/jpeg', 0.92);
+                const exifBytes = piexif.dump(exifObj);
+                const imageWithExif = piexif.insert(exifBytes, rotatedImage);
+                
+                elements.photoPreview.src = imageWithExif;
+                appState.photoWithMetadata = imageWithExif;
+                resolve();
+            } catch (e) {
+                console.error("Error in rotateImage:", e);
+                reject(e);
+            }
+        };
+        img.onerror = (e) => reject(new Error("Error loading image to rotate"));
+        img.src = appState.photoWithMetadata;
+    });
 }
 
 async function handleDownload() {

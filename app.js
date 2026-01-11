@@ -62,6 +62,7 @@ const elements = {
     // Gallery Elements
     galleryGrid: null,
     selectAllBtn: null,
+    refreshGalleryBtn: null,
     downloadSelectedBtn: null,
     deleteSelectedBtn: null,
     galleryCount: null
@@ -92,6 +93,7 @@ async function init() {
     // Gallery Elements
     elements.galleryGrid = document.getElementById('gallery-grid');
     elements.selectAllBtn = document.getElementById('select-all-btn');
+    elements.refreshGalleryBtn = document.getElementById('refresh-gallery-btn');
     elements.downloadSelectedBtn = document.getElementById('download-selected-btn');
     elements.deleteSelectedBtn = document.getElementById('delete-selected-btn');
     elements.galleryCount = document.getElementById('gallery-count');
@@ -677,6 +679,13 @@ function attachEventListeners() {
                 cb.parentElement.parentElement.classList.toggle('selected', anyUnchecked);
             });
             updateGalleryButtons();
+        });
+    }
+
+    if (elements.refreshGalleryBtn) {
+        elements.refreshGalleryBtn.addEventListener('click', () => {
+             showStatus('Actualizando galería...', 'info');
+             loadGallery(true);
         });
     }
 

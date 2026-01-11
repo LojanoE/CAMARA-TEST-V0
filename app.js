@@ -212,6 +212,9 @@ function loadGallery(reset = true) {
     let advanced = false;
     let countInBatch = 0;
     
+    // Determine how many items to skip (only if NOT resetting)
+    const skipCount = reset ? 0 : appState.itemsLoaded;
+
     request.onsuccess = (event) => {
         // If a newer load has started, abort this one
         if (currentLoadID !== appState.galleryLoadID) return;
@@ -231,9 +234,9 @@ function loadGallery(reset = true) {
         }
 
         // Check if we need to skip items (simple pagination logic)
-        if (appState.itemsLoaded > 0 && !advanced) {
-             cursor.advance(appState.itemsLoaded);
+        if (skipCount > 0 && !advanced) {
              advanced = true;
+             cursor.advance(skipCount);
              return;
         }
 

@@ -137,11 +137,14 @@ function savePhotoToDB(photoDataUrl, metadata) {
     return new Promise((resolve, reject) => {
         if (!appState.db) return reject(new Error('Base de datos no lista. Recargue la página.'));
 
+        // Convert DataURL to Blob for storage efficiency and to avoid QuotaExceededError
+        const blob = dataURLtoBlob(photoDataUrl);
+
         const transaction = appState.db.transaction(['photos'], 'readwrite');
         const store = transaction.objectStore('photos');
 
         const photoRecord = {
-            image: photoDataUrl,
+            image: blob, // Store Blob
             metadata: metadata,
             timestamp: new Date().getTime(), // For sorting
             displayDate: new Date().toLocaleString()
@@ -273,7 +276,13 @@ function renderGalleryItem(item) {
     const img = clone.querySelector('img');
     const checkbox = clone.querySelector('.gallery-checkbox');
 
-    img.src = item.image;
+    // Handle Blob or Legacy DataURL
+    if (item.image instanceof Blob) {
+        img.src = URL.createObjectURL(item.image);
+    } else {
+        img.src = item.image;
+    }
+
     checkbox.dataset.id = item.id;
     div.dataset.id = item.id;
 
@@ -336,8 +345,13 @@ async function downloadSelectedPhotos() {
         try {
             const item = await getPhotoFromDB(Number(cb.dataset.id));
             if (item) {
+                let imageDataUrl = item.image;
+                if (item.image instanceof Blob) {
+                    imageDataUrl = await blobToDataURL(item.image);
+                }
+
                 // For single download, process on main thread for simplicity
-                const finalImage = await addTimestampAndLogoToImage(item.image); 
+                const finalImage = await addTimestampAndLogoToImage(imageDataUrl); 
                 const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                 const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
                 saveAs(dataURLtoBlob(finalImage), filename);
@@ -370,8 +384,13 @@ async function downloadSelectedPhotos() {
                     const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                     const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
 
+                    let imageDataUrl = item.image;
+                    if (item.image instanceof Blob) {
+                        imageDataUrl = await blobToDataURL(item.image);
+                    }
+
                     // Process SINGLE photo via Worker
-                    const processedBlob = await processImageInWorker(currentPhotoId, item.image);
+                    const processedBlob = await processImageInWorker(currentPhotoId, imageDataUrl);
                     
                     if (processedBlob) {
                         zip.file(filename, processedBlob);
@@ -425,6 +444,15 @@ async function downloadSelectedPhotos() {
 
     elements.downloadSelectedBtn.innerHTML = originalBtnText;
     elements.downloadSelectedBtn.disabled = false;
+}
+
+function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 }
 
 // Wrapper to handle Worker communication as a Promise with Timeout

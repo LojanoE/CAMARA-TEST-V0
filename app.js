@@ -35,6 +35,7 @@ const appState = {
     isGpsDisplayThrottled: false,
     gpsDisplayThrottleTime: 5000,
     isFormInteractionActive: false,
+    galleryLoadID: 0,
     db: null // IndexedDB instance
 };
 
@@ -191,6 +192,10 @@ const ITEMS_PER_PAGE = 20;
 function loadGallery(reset = true) {
     if (!appState.db) return;
 
+    // Concurrency control: Increment ID for this load attempt
+    appState.galleryLoadID++;
+    const currentLoadID = appState.galleryLoadID;
+
     if (reset) {
         elements.galleryGrid.innerHTML = '';
         appState.itemsLoaded = 0;
@@ -207,12 +212,10 @@ function loadGallery(reset = true) {
     let advanced = false;
     let countInBatch = 0;
     
-    // We need to skip items we've already loaded. 
-    // IndexedDB openCursor doesn't support 'offset' directly easily without advance(), 
-    // but advance() can be slow for huge lists. 
-    // For now, simple advance() is fine for < 1000 items.
-
     request.onsuccess = (event) => {
+        // If a newer load has started, abort this one
+        if (currentLoadID !== appState.galleryLoadID) return;
+
         const cursor = event.target.result;
         
         if (!cursor) {
@@ -227,13 +230,7 @@ function loadGallery(reset = true) {
             return;
         }
 
-        if (reset && !advanced && appState.itemsLoaded > 0) {
-           // Should not happen if logic is correct, reset sets itemsLoaded to 0
-        }
-
         // Check if we need to skip items (simple pagination logic)
-        // Note: For better performance with huge lists, we should use key ranges, 
-        // but skipping logical index is okay for this scale.
         if (appState.itemsLoaded > 0 && !advanced) {
              cursor.advance(appState.itemsLoaded);
              advanced = true;

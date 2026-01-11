@@ -4,7 +4,7 @@
 
 **CAM-TEST-V12** (also referred to as GDR-CAM) is a Progressive Web Application (PWA) designed for capturing field photos with embedded metadata. It is optimized for mobile devices and offline usage.
 
-**Current Version:** v12.6 (Stability Update)
+**Current Version:** v12.7 (Blob Storage Fix)
 
 The application allows users to:
 1.  **Capture Photos:** Uses the device's native camera application for high-quality capture (via `capture="environment"`).
@@ -18,6 +18,12 @@ The application allows users to:
 5.  **Smart Export:**
     *   **Single Download:** Downloads individual photos as **JPG** with stamped metadata.
     *   **Bulk Download:** Bundles multiple selections into a **ZIP** archive using a background **Web Worker** to prevent UI freezing.
+
+## Recent Updates (v12.7)
+
+*   **Critical Storage Fix (Blob vs Base64):** Migrated `IndexedDB` storage from using DataURL (strings) to `Blob` (binary). This significantly reduces memory usage and resolves the `QuotaExceededError` that caused photos to not save (especially in offline mode or after multiple captures).
+*   **Backward Compatibility:** The gallery now automatically detects whether a stored photo is in the old format (string) or new format (blob) and displays it correctly, preserving existing data.
+*   **Web Worker Update:** Updated `imageProcessorWorker.js` to handle `Blob` inputs for background ZIP generation.
 
 ## Recent Updates (v12.6)
 

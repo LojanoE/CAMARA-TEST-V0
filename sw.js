@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v13.03-blob-storage'; // Version bump for Blob storage fix
+const CACHE_NAME = 'cam-test-v13.04-blob-storage'; // Version bump for Blob storage fix
 const ASSETS = [
   './',
   './index.html',

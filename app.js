@@ -699,6 +699,10 @@ function handleNativeCameraCapture(event) {
 
     showStatus('Procesando...', 'success');
     
+    // Al capturar una nueva foto, reiniciamos la "mejor ubicación"
+    // para forzar al sistema a obtener la ubicación más fresca de este punto.
+    appState.bestLocation = null;
+
     const reader = new FileReader();
     reader.onload = (e) => {
         const img = new Image();
@@ -786,6 +790,18 @@ function startGpsSystem() {
     );
 }
 
+function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371000; // Radio de la Tierra en metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
 function updateLocationState(position) {
     const newPos = {
         latitude: position.coords.latitude,
@@ -797,10 +813,31 @@ function updateLocationState(position) {
         speed: position.coords.speed,
         timestamp: position.timestamp
     };
+    
     appState.currentLocation = newPos;
-    if (!appState.bestLocation || (newPos.accuracy < appState.bestLocation.accuracy)) {
+
+    // Umbral de movimiento para considerar que estamos en un "nuevo punto" (metros)
+    const movementThreshold = 15; 
+    let distanceMoved = 0;
+    
+    if (appState.bestLocation) {
+        distanceMoved = getDistance(
+            appState.bestLocation.latitude, appState.bestLocation.longitude,
+            newPos.latitude, newPos.longitude
+        );
+    }
+
+    // Actualizar ubicación óptima si:
+    // 1. No hay ubicación previa
+    // 2. El usuario se ha movido significativamente (nuevo punto)
+    // 3. La precisión es mejor que la actual
+    if (!appState.bestLocation || distanceMoved > movementThreshold || (newPos.accuracy < appState.bestLocation.accuracy)) {
+        if (distanceMoved > movementThreshold) {
+            console.log(`Movimiento detectado (${Math.round(distanceMoved)}m). Reiniciando mejor ubicación.`);
+        }
         appState.bestLocation = { ...newPos };
     }
+
     if (elements.gpsStatus) {
         elements.gpsStatus.textContent = `GPS: ±${Math.round(appState.bestLocation.accuracy)}m`;
         elements.gpsStatus.style.color = '#28a745';
@@ -1217,6 +1254,8 @@ function newCapture() {
     if (otherActivityInput) otherActivityInput.value = '';
     const otherActivityGroup = document.getElementById('other-activity-group');
     if (otherActivityGroup) otherActivityGroup.classList.add('hidden');
+
+    appState.bestLocation = null; // Reiniciar para asegurar captura de nueva ubicación
 
     loadPersistentData();
     loadGallery(); // Refresh gallery view

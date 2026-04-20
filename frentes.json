@@ -7,22 +7,20 @@
     "Dren Inclinado",
     "Dren de Derivación D-VC",
     "Dren de Derivación D-08",
+    "Dren de Derivación D-08B",
     "Dren de Derivación D-11",
+    "Dren de Derivación D-18",
     "Dren de Derivación D-32",
     "Dren de Derivación D-37",
     "Dren de Derivación D-980",
     "Dren de Derivación D-980B",
     "Canal 980A",
+    "Quebrada #3",
+    "Quebrada #4",
     "P795 (C980 Subsec 3)",
-    "P805 (C980 Subsec 3)",
     "P833 (C980 Subsec 3)",
-    "P835 (C980 Subsec 3)",
-    "P870 (C980 Subsec 3)",
-    "P905 (C980 Subsec 2)",
-    "P965 (C980 Subsec 2)",
     "P980 (C980 Subsec 3)",
     "P845 EI (C980 Subsec 3)",
-    "P865 EI (C980 Subsec 3)",
     "P920 EI (C980 Subsec 2)",
     "P950 EI (C980 Subsec 2)",
     "P965 EI (C980 Subsec 3)",
@@ -35,6 +33,8 @@
     "P940 (C990 Subsec 2)",
     "P965 (C990 Subsec 1)",
     "Vaso del DRT",
+    "Subembalse 1",
+    "Subembalse 2",
     "Instituto Yangtsé",
     "Escombrera del hombro derecho",
     "Escombrera del hombro izquierdo",
@@ -42,7 +42,7 @@
     "Acceso al tajo de mina",
     "Via al Cóndor",
     "Pozos de drenaje",
-    "Acceso tubería de relave (Descarga)"
+    "Acceso cota 1000 msnm"
   ],
   "actividades": [
     "Z1 Descarga",
@@ -61,6 +61,8 @@
     "Preparación de Fundación",
     "Aforo",
     "Conformación de Accesos DRQ",
-    "Capa de sacrificio de relleno"
+    "Capa de sacrificio de relleno",
+    "Bombeo de agua",
+    "Relleno con arcilla"
   ]
 }

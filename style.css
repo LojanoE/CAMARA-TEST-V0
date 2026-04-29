@@ -37,6 +37,31 @@ body {
 .header h1 {
     margin: 0;
     font-size: 1.5rem;
+    flex: 1;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.status-btn, .admin-btn-small {
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: white;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.status-btn:hover, .admin-btn-small:hover {
+    background: rgba(255,255,255,0.2);
+}
+
+#connection-icon {
+    font-size: 1.1rem;
 }
 
 .main-content {
@@ -480,4 +505,248 @@ canvas {
     text-align: center;
     color: #888;
     padding: 20px;
+}
+
+/* Admin Panel Styles */
+.admin-modal-content {
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.admin-login {
+    padding: 20px;
+}
+
+.admin-login h3 {
+    margin-top: 0;
+    margin-bottom: 20px;
+}
+
+.admin-login .form-group {
+    margin-bottom: 15px;
+}
+
+.admin-login input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #4e6a85;
+    border-radius: 4px;
+    background-color: #1A2230;
+    color: var(--light-color);
+    box-sizing: border-box;
+}
+
+.admin-error {
+    color: var(--danger-color);
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(220, 53, 69, 0.1);
+    border-radius: 4px;
+}
+
+.admin-panel {
+    padding: 20px;
+}
+
+.admin-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #4e6a85;
+}
+
+.admin-header h3 {
+    margin: 0;
+    flex: 1;
+}
+
+.admin-status {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.connection-indicator {
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    background: rgba(0,0,0,0.3);
+}
+
+.connection-indicator.offline {
+    background: rgba(220, 53, 69, 0.3);
+    color: #ff6b6b;
+}
+
+.connection-indicator.poor {
+    background: rgba(253, 126, 20, 0.3);
+    color: #ffaa5c;
+}
+
+.connection-indicator.fair {
+    background: rgba(255, 193, 7, 0.3);
+    color: #ffe066;
+}
+
+.connection-indicator.good,
+.connection-indicator.excellent {
+    background: rgba(40, 167, 69, 0.3);
+    color: #6bcf7f;
+}
+
+.sync-pending-badge {
+    padding: 5px 10px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    background: rgba(255, 193, 7, 0.3);
+    color: #ffe066;
+}
+
+.admin-tabs {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #4e6a85;
+}
+
+.admin-tab {
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    color: #8899ac;
+    cursor: pointer;
+    transition: all 0.3s;
+    font-size: 1rem;
+}
+
+.admin-tab:hover {
+    color: var(--light-color);
+}
+
+.admin-tab.active {
+    color: var(--primary-color);
+    border-bottom-color: var(--primary-color);
+}
+
+.admin-section {
+    margin-bottom: 20px;
+}
+
+.admin-add-form {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.admin-add-form input {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #4e6a85;
+    border-radius: 4px;
+    background-color: #1A2230;
+    color: var(--light-color);
+}
+
+.admin-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #4e6a85;
+    border-radius: 4px;
+    background-color: rgba(0,0,0,0.2);
+}
+
+.admin-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    border-bottom: 1px solid #3a5068;
+}
+
+.admin-item:last-child {
+    border-bottom: none;
+}
+
+.admin-item-name {
+    flex: 1;
+    color: var(--light-color);
+}
+
+.admin-item-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.admin-btn-edit,
+.admin-btn-delete {
+    background: transparent;
+    border: none;
+    color: #8899ac;
+    cursor: pointer;
+    padding: 5px 10px;
+    border-radius: 4px;
+    transition: all 0.3s;
+}
+
+.admin-btn-edit:hover {
+    background: rgba(0, 123, 255, 0.2);
+    color: var(--primary-color);
+}
+
+.admin-btn-delete:hover {
+    background: rgba(220, 53, 69, 0.2);
+    color: var(--danger-color);
+}
+
+.admin-edit-input {
+    padding: 5px 10px;
+    border: 1px solid var(--primary-color);
+    border-radius: 4px;
+    background-color: #1A2230;
+    color: var(--light-color);
+    width: 60%;
+}
+
+.admin-btn-save,
+.admin-btn-cancel {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 5px 8px;
+    margin-left: 5px;
+}
+
+.admin-btn-save {
+    color: var(--success-color);
+}
+
+.admin-btn-cancel {
+    color: var(--danger-color);
+}
+
+.admin-empty {
+    text-align: center;
+    color: #8899ac;
+    padding: 30px;
+    font-style: italic;
+}
+
+.admin-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding-top: 15px;
+    border-top: 1px solid #4e6a85;
+}
+
+.admin-actions .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }

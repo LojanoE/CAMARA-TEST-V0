@@ -19,7 +19,15 @@
     <div class="container-fluid">
         <header class="header">
             <img src="img/LOGO GDR.jpeg" alt="GDR Logo" class="logo">
-            <h1><CAM-TEST-V17>CAM-TEST-V19></CAM-TEST-V17></h1>
+            <h1>CAM-TEST-V20</h1>
+            <div class="header-actions">
+                <button id="connection-status-btn" class="status-btn" title="Estado de conexión">
+                    <span id="connection-icon">⏳</span>
+                </button>
+                <button id="admin-panel-btn" class="admin-btn-small" title="Panel de Administración">
+                    <i class="fas fa-cog"></i>
+                </button>
+            </div>
         </header>
         
         <main class="main-content">
@@ -78,10 +86,7 @@
                     <div class="form-group">
                         <label for="coronation">Coronamiento:</label>
                         <select id="coronation" required>
-                            <option value="">Seleccione una opción</option>
-                            <option value="C980">C980</option>
-                            <option value="C990">C990</option>
-                            <option value="DRQ">DRQ</option>
+                            <option value="">Cargando...</option>
                         </select>
                     </div>
                     
@@ -154,10 +159,15 @@
         </div>
     </template>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <script src="jszip.min.js"></script>
     <script src="FileSaver.min.js"></script>
     <script src="exif.js"></script>
     <script src="piexif.js"></script>
+    <script src="connection-monitor.js"></script>
+    <script src="db-manager.js"></script>
+    <script src="supabase-client.js"></script>
+    <script src="admin-panel.js"></script>
     <script src="app.js"></script>
     <script>
       if ('serviceWorker' in navigator) {

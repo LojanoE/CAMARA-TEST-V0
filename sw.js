@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v19-blob-storage'; // Version bump for Blob storage fix
+const CACHE_NAME = 'cam-test-v21-coronamientos'; // Version v21 - coronamientos from Supabase
 const ASSETS = [
   './',
   './index.html',
@@ -8,10 +8,19 @@ const ASSETS = [
   './piexif.js',
   './jszip.min.js',
   './FileSaver.min.js',
-  './frentes.json',
+  './connection-monitor.js',
+  './db-manager.js',
+  './supabase-client.js',
+  './admin-panel.js',
   './manifest.json',
   './img/icon-512x512.png',
   './img/LOGO GDR.jpeg'
+];
+
+// CDN resources to cache
+const CDN_ASSETS = [
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css'
 ];
 
 self.addEventListener('install', (event) => {
@@ -19,7 +28,17 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[Service Worker] Pre-caching assets');
-      return cache.addAll(ASSETS);
+      // Cache local assets
+      return cache.addAll(ASSETS).then(() => {
+        // Cache CDN assets (optional, may fail if offline during install)
+        return Promise.allSettled(
+          CDN_ASSETS.map(url => 
+            fetch(url, { mode: 'no-cors' })
+              .then(response => cache.put(url, response))
+              .catch(err => console.log('[SW] Could not cache CDN:', url))
+          )
+        );
+      });
     })
   );
 });
@@ -40,44 +59,64 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Ignorar peticiones que no sean GET o que sean a otros dominios (analytics, etc)
-  if (event.request.method !== 'GET' || !event.request.url.startsWith(self.location.origin)) {
+  const url = new URL(event.request.url);
+  
+  // 1. Ignorar peticiones que no sean GET
+  if (event.request.method !== 'GET') {
+    return;
+  }
+  
+  // 2. Peticiones a Supabase API: siempre network (no cachear)
+  if (url.hostname.includes('supabase.co')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+  
+  // 3. Peticiones a otros dominios (CDN, analytics, etc): pasar directo
+  if (!event.request.url.startsWith(self.location.origin)) {
+    // Intentar cache primero para CDN conocidos
+    if (CDN_ASSETS.includes(event.request.url)) {
+      event.respondWith(async function() {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match(event.request);
+        if (cached) return cached;
+        return fetch(event.request);
+      }());
+    }
     return;
   }
 
+  // 4. Peticiones locales: usar estrategia según conexión
   event.respondWith(async function() {
     const cache = await caches.open(CACHE_NAME);
     const cachedResponse = await cache.match(event.request);
 
-    // 1. Detección de Red: ¿Es lenta?
-    // La API navigator.connection no está en todos los navegadores, así que la verificamos.
+    // Detección de Red: ¿Es lenta?
     const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
     const isSlow = connection && (connection.effectiveType === 'slow-2g' || connection.effectiveType === '2g' || connection.saveData === true);
 
     // LÓGICA DE ESTRATEGIA
     if (isSlow || !navigator.onLine) {
       // ESTRATEGIA: CACHE FIRST (Prioridad Velocidad/Offline)
-      // Si tenemos el archivo en caché, lo devolvemos inmediatamente.
       if (cachedResponse) {
         return cachedResponse;
       }
-      // Si no, intentamos red (aunque sea lenta, es la única opción)
+      // Si no está en caché, intentar red
       return fetch(event.request);
       
     } else {
       // ESTRATEGIA: NETWORK FIRST (Prioridad Actualización)
-      // Intentamos ir a la red para buscar actualizaciones
       try {
         const networkResponse = await fetch(event.request);
         
-        // Si la respuesta es válida, actualizamos la caché para la próxima vez
+        // Si la respuesta es válida, actualizamos la caché
         if (networkResponse && networkResponse.status === 200) {
           cache.put(event.request, networkResponse.clone());
         }
         
         return networkResponse;
       } catch (error) {
-        // Si falla la red (ej. se cae el wifi momentáneamente), usamos la caché
+        // Si falla la red, usamos la caché
         console.log('[Service Worker] Network failed, falling back to cache');
         if (cachedResponse) {
           return cachedResponse;

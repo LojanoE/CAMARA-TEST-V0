@@ -71,6 +71,7 @@ const elements = {
 
 // Initialize the application
 async function init() {
+    console.log('Initializing app...');
     // Get DOM elements
     elements.cameraInput = document.getElementById('camera-input');
     elements.canvas = document.createElement('canvas');
@@ -99,10 +100,28 @@ async function init() {
     elements.deleteSelectedBtn = document.getElementById('delete-selected-btn');
     elements.galleryCount = document.getElementById('gallery-count');
     
-    await loadWorkFronts();
+    // Initialize IndexedDB with new schema (photos + frentes + actividades + sync)
+    try {
+        console.log('Initializing DB_MANAGER...');
+        await DB_MANAGER.init();
+        console.log('DB_MANAGER initialized');
+        await initDB(); // Initialize photo database (uses DB_MANAGER connection)
+        console.log('initDB completed');
+    } catch (dbError) {
+        console.error('Database initialization error:', dbError);
+        showStatus('Error al iniciar base de datos: ' + dbError.message, 'error');
+    }
+    
+    // Load work fronts from Supabase (offline-first)
+    try {
+        await loadWorkFronts();
+    } catch (wfError) {
+        console.error('Error loading work fronts:', wfError);
+    }
     loadPersistentData();
     attachEventListeners();
-    initDB(); // Initialize Database
+    initConnectionMonitor(); // Start monitoring connection
+    initAdminPanel(); // Setup admin panel button
     
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
@@ -111,29 +130,27 @@ async function init() {
     }
         
     startGpsSystem();
+    console.log('App initialized successfully');
 }
 
 // --- IndexedDB Logic ---
-function initDB() {
-    const request = indexedDB.open('GDR_CAM_DB', 1);
-
-    request.onerror = (event) => {
-        console.error("DB Error:", event.target.errorCode);
+async function initDB() {
+    // Use DB_MANAGER's connection if available (version 2 schema)
+    if (DB_MANAGER.db) {
+        appState.db = DB_MANAGER.db;
+        loadGallery();
+        return;
+    }
+    
+    // Fallback: wait for DB_MANAGER to initialize
+    try {
+        await DB_MANAGER.init();
+        appState.db = DB_MANAGER.db;
+        loadGallery();
+    } catch (error) {
+        console.error("DB Error:", error);
         showStatus('Error al iniciar base de datos local', 'error');
-    };
-
-    request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains('photos')) {
-            const objectStore = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
-            objectStore.createIndex('timestamp', 'timestamp', { unique: false });
-        }
-    };
-
-    request.onsuccess = (event) => {
-        appState.db = event.target.result;
-        loadGallery(); // Load photos when DB is ready
-    };
+    }
 }
 
 function savePhotoToDB(photoDataUrl, metadata) {
@@ -503,32 +520,155 @@ function updateGalleryButtons() {
 
 async function loadWorkFronts() {
     try {
-        const response = await fetch('frentes.json');
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const data = await response.json();
-        
-        // Handle both old array format and new object format
-        const workFronts = Array.isArray(data) ? data : data.frentes;
-        const activities = Array.isArray(data) ? [] : (data.actividades || []);
+        // Use Supabase client with offline-first strategy
+        await SUPABASE_CLIENT.loadDataWithCache((data) => {
+            // Update work fronts select
+            const workFrontSelect = document.getElementById('work-front');
+            const otherOption = workFrontSelect.querySelector('option[value="otro"]');
+            
+            // Clear existing options except 'otro' and default
+            const optionsToRemove = Array.from(workFrontSelect.options).filter(opt => opt.value !== "" && opt.value !== "otro");
+            optionsToRemove.forEach(opt => opt.remove());
 
-        const workFrontSelect = document.getElementById('work-front');
-        const otherOption = workFrontSelect.querySelector('option[value="otro"]');
-        
-        // Clear existing options except 'otro' and default
-        const optionsToRemove = Array.from(workFrontSelect.options).filter(opt => opt.value !== "" && opt.value !== "otro");
-        optionsToRemove.forEach(opt => opt.remove());
+            // Add work fronts from data
+            if (data.frentes && data.frentes.length > 0) {
+                data.frentes.forEach(front => {
+                    const option = document.createElement('option');
+                    option.value = front;
+                    option.textContent = front;
+                    workFrontSelect.insertBefore(option, otherOption);
+                });
+            }
 
-        workFronts.forEach(front => {
+            populateWorkFrontOptions();
+            
+            // Update activities
+            if (data.actividades && data.actividades.length > 0) {
+                populateActivityList(data.actividades);
+            }
+            
+            // Update coronamientos
+            populateCoronamientos(data.coronamientos || []);
+            
+            console.log(`Data loaded from ${data.source}:`, 
+                (data.frentes || []).length, 'frentes,', 
+                (data.actividades || []).length, 'actividades,',
+                (data.coronamientos || []).length, 'coronamientos');
+        });
+        
+    } catch (error) {
+        console.error('Could not load work fronts:', error);
+        showStatus('Error cargando frentes. Usando cache local.', 'warning');
+    }
+}
+
+function populateCoronamientos(coronamientos) {
+    const select = document.getElementById('coronation');
+    if (!select) return;
+    
+    // Clear existing options except the placeholder
+    const placeholder = select.querySelector('option[value=""]');
+    select.innerHTML = '';
+    if (placeholder) {
+        select.appendChild(placeholder);
+    } else {
+        const defaultOption = document.createElement('option');
+        defaultOption.value = '';
+        defaultOption.textContent = 'Seleccione una opción';
+        select.appendChild(defaultOption);
+    }
+    
+    coronamientos.forEach(nombre => {
+        const option = document.createElement('option');
+        option.value = nombre;
+        option.textContent = nombre;
+        select.appendChild(option);
+    });
+}
+
+// Function to update work fronts from admin panel changes
+window.updateWorkFrontsFromAdmin = async function(data) {
+    // Re-load the work fronts with the new data
+    const workFrontSelect = document.getElementById('work-front');
+    const otherOption = workFrontSelect.querySelector('option[value="otro"]');
+    
+    // Clear existing options except 'otro' and default
+    const optionsToRemove = Array.from(workFrontSelect.options).filter(opt => opt.value !== "" && opt.value !== "otro");
+    optionsToRemove.forEach(opt => opt.remove());
+
+    // Add work fronts from data
+    if (data.frentes && data.frentes.length > 0) {
+        data.frentes.forEach(front => {
             const option = document.createElement('option');
             option.value = front;
             option.textContent = front;
             workFrontSelect.insertBefore(option, otherOption);
         });
+    }
 
-        populateWorkFrontOptions();
-        populateActivityList(activities);
-    } catch (error) {
-        console.error('Could not load work fronts:', error);
+    populateWorkFrontOptions();
+    
+    // Update activities
+    if (data.actividades && data.actividades.length > 0) {
+        populateActivityList(data.actividades);
+    }
+    
+    // Update coronamientos
+    populateCoronamientos(data.coronamientos || []);
+};
+
+// Initialize connection monitor UI
+function initConnectionMonitor() {
+    const statusBtn = document.getElementById('connection-status-btn');
+    const statusIcon = document.getElementById('connection-icon');
+    
+    if (!statusBtn || !statusIcon) return;
+    
+    // Update connection status periodically
+    const updateStatus = async () => {
+        const quality = await CONNECTION_MONITOR.checkConnectionQuality();
+        const visuals = CONNECTION_MONITOR.getStatusVisuals(quality.status);
+        
+        statusIcon.textContent = visuals.icon;
+        statusBtn.title = quality.message;
+        statusBtn.style.color = visuals.color;
+    };
+    
+    // Update immediately and then every 30 seconds
+    updateStatus();
+    setInterval(updateStatus, 30000);
+    
+    // Also update on online/offline events
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
+    
+    // Click to show detailed status
+    statusBtn.addEventListener('click', async () => {
+        const quality = await CONNECTION_MONITOR.checkConnectionQuality();
+        showStatus(
+            `${quality.message}${quality.ping ? ` (${quality.ping}ms)` : ''}`,
+            quality.canSync ? 'success' : 'warning'
+        );
+    });
+}
+
+// Initialize admin panel
+function initAdminPanel() {
+    console.log('Initializing admin panel...');
+    const adminBtn = document.getElementById('admin-panel-btn');
+    console.log('Admin button found:', adminBtn);
+    if (adminBtn) {
+        adminBtn.addEventListener('click', () => {
+            console.log('Admin button clicked');
+            if (typeof ADMIN_PANEL !== 'undefined') {
+                ADMIN_PANEL.toggle();
+            } else {
+                console.error('ADMIN_PANEL not loaded');
+                showStatus('Error: Panel de admin no cargado', 'error');
+            }
+        });
+    } else {
+        console.error('Admin button not found in DOM');
     }
 }
 

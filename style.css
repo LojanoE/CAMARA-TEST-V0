@@ -14,6 +14,10 @@ body {
     padding: 0;
     background-color: #1A2230;
     color: var(--light-color);
+    touch-action: pan-y;
+    -webkit-text-size-adjust: 100%;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
 }
 
 .container-fluid {
@@ -192,6 +196,13 @@ canvas {
     box-sizing: border-box;
     background-color: #1A2230;
     color: var(--light-color);
+    font-size: 16px;
+}
+
+@supports (-webkit-touch-callout: none) {
+    input, select, textarea {
+        font-size: 16px !important;
+    }
 }
 
 .action-buttons {
@@ -749,4 +760,31 @@ canvas {
 .admin-actions .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+/* Anti-zoom para iOS */
+* {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+}
+
+input, select, textarea, button {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Scroll vertical suave */
+.container-fluid {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Botones mínimo 44px para touch */
+.btn, .control-btn, .admin-btn-small, .status-btn, .btn-small {
+    min-height: 44px;
+}
+
+.control-btn.big-btn {
+    min-height: 52px;
 }

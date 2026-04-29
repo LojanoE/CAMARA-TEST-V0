@@ -1,5 +1,27 @@
 // GDR-CAM Application Logic - Native Camera + Gallery Version + Enhanced Metadata
 
+// Anti-zoom para iOS: prevenir pinch-to-zoom y double-tap zoom
+(function() {
+    document.addEventListener('gesturestart', function(e) {
+        e.preventDefault();
+    }, { passive: false });
+    
+    document.addEventListener('touchmove', function(e) {
+        if (e.touches.length > 1) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    var lastTouchEnd = 0;
+    document.addEventListener('touchend', function(e) {
+        var now = Date.now();
+        if (now - lastTouchEnd <= 300) {
+            e.preventDefault();
+        }
+        lastTouchEnd = now;
+    }, { passive: false });
+})();
+
 // Create a Web Worker instance for image processing
 const imageProcessorWorker = new Worker('./imageProcessorWorker.js');
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v21-coronamientos'; // Version v21 - coronamientos from Supabase
+const CACHE_NAME = 'cam-test-v21-1-ios-fix'; // Version v21.1 - iOS anti-zoom fix
 const ASSETS = [
   './',
   './index.html',

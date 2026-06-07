@@ -151,6 +151,52 @@
         </div>
     </div>
 
+    <div id="edit-metadata-modal" class="modal hidden">
+        <div class="modal-content edit-modal-content">
+            <span class="close-button" id="close-edit-modal">&times;</span>
+            <h2>Editar Metadatos</h2>
+            <div class="form-group">
+                <label for="edit-work-front">Frente de Trabajo:</label>
+                <select id="edit-work-front" required>
+                    <option value="">Seleccione una opción</option>
+                    <option value="otro">Otro</option>
+                </select>
+                <div id="edit-other-work-front-group" class="hidden" style="margin-top: 8px;">
+                    <input type="text" id="edit-other-work-front" placeholder="Especifique frente de trabajo">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="edit-coronation">Coronamiento:</label>
+                <select id="edit-coronation" required>
+                    <option value="">Seleccione una opción</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="edit-observation-category">Categoría de Observación:</label>
+                <select id="edit-observation-category" required>
+                    <option value="">Seleccione una opción</option>
+                    <option value="rutina">Rutina</option>
+                    <option value="liberacion">Liberación</option>
+                    <option value="novedad">Novedad</option>
+                    <option value="importante">Importante</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Actividad Realizada:</label>
+                <div id="edit-activity-list" class="activity-checkbox-list">
+                    <!-- Se llena dinámicamente -->
+                </div>
+                <div id="edit-other-activity-group" class="hidden" style="margin-top: 10px;">
+                    <input type="text" id="edit-other-activity" placeholder="Especifique otra actividad">
+                </div>
+            </div>
+            <div class="action-buttons">
+                <button id="cancel-edit-btn" class="btn btn-secondary">Cancelar</button>
+                <button id="save-edit-btn" class="btn btn-primary">Guardar Cambios</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Galería Section (Template) -->
     <template id="gallery-item-template">
         <div class="gallery-item">
@@ -158,6 +204,9 @@
             <div class="gallery-item-overlay">
                 <input type="checkbox" class="gallery-checkbox">
             </div>
+            <button class="gallery-edit-btn" title="Editar metadatos">
+                <i class="fas fa-pencil-alt"></i>
+            </button>
         </div>
     </template>
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v21-1-ios-fix'; // Version v21.1 - iOS anti-zoom fix
+const CACHE_NAME = 'cam-test-v22-0-metadata-edit'; // Version v22.0 - Metadata edit support
 const ASSETS = [
   './',
   './index.html',

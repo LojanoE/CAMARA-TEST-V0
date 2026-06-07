@@ -61,6 +61,8 @@ const appState = {
     db: null // IndexedDB instance
 };
 
+let currentEditPhotoId = null;
+
 // DOM Elements
 const elements = {
     cameraInput: null,
@@ -223,6 +225,24 @@ function savePhotoToDB(photoDataUrl, metadata) {
     });
 }
 
+function updatePhotoInDB(id, updates) {
+    return new Promise((resolve, reject) => {
+        if (!appState.db) return reject(new Error('Base de datos no lista.'));
+        const transaction = appState.db.transaction(['photos'], 'readwrite');
+        const store = transaction.objectStore('photos');
+        const request = store.get(id);
+        request.onsuccess = () => {
+            const photo = request.result;
+            if (!photo) return reject(new Error('Foto no encontrada.'));
+            const updated = { ...photo, ...updates };
+            const putRequest = store.put(updated);
+            putRequest.onsuccess = () => resolve();
+            putRequest.onerror = () => reject(putRequest.error);
+        };
+        request.onerror = () => reject(request.error);
+    });
+}
+
 // Pagination State
 appState.galleryCursor = null; // To store the last cursor key if needed, or simply count
 appState.itemsLoaded = 0;
@@ -316,6 +336,7 @@ function renderGalleryItem(item) {
     const div = clone.querySelector('.gallery-item');
     const img = clone.querySelector('img');
     const checkbox = clone.querySelector('.gallery-checkbox');
+    const editBtn = clone.querySelector('.gallery-edit-btn');
 
     // Handle Blob or Legacy DataURL
     if (item.image instanceof Blob) {
@@ -329,7 +350,7 @@ function renderGalleryItem(item) {
 
     // Selection logic
     div.addEventListener('click', (e) => {
-        if (e.target !== checkbox) {
+        if (e.target !== checkbox && !e.target.closest('.gallery-edit-btn')) {
             checkbox.checked = !checkbox.checked;
         }
         div.classList.toggle('selected', checkbox.checked);
@@ -340,6 +361,14 @@ function renderGalleryItem(item) {
         div.classList.toggle('selected', checkbox.checked);
         updateGalleryButtons();
     });
+
+    // Edit button logic
+    if (editBtn) {
+        editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openEditMetadataModal(item.id);
+        });
+    }
 
     elements.galleryGrid.appendChild(clone);
 }
@@ -853,6 +882,23 @@ function attachEventListeners() {
 
     if (elements.deleteSelectedBtn) elements.deleteSelectedBtn.addEventListener('click', deleteSelectedPhotos);
     if (elements.downloadSelectedBtn) elements.downloadSelectedBtn.addEventListener('click', downloadSelectedPhotos);
+
+    // Edit metadata modal listeners
+    document.getElementById('close-edit-modal').addEventListener('click', closeEditMetadataModal);
+    document.getElementById('cancel-edit-btn').addEventListener('click', closeEditMetadataModal);
+    document.getElementById('save-edit-btn').addEventListener('click', saveEditedMetadata);
+    document.getElementById('edit-work-front').addEventListener('change', () => {
+        const group = document.getElementById('edit-other-work-front-group');
+        if (document.getElementById('edit-work-front').value === 'otro') {
+            group.classList.remove('hidden');
+        } else {
+            group.classList.add('hidden');
+        }
+    });
+    window.addEventListener('click', (e) => {
+        const modal = document.getElementById('edit-metadata-modal');
+        if (e.target === modal) closeEditMetadataModal();
+    });
 }
 
 function handleNativeCameraCapture(event) {
@@ -1494,6 +1540,259 @@ function setupMetadataModal() {
     
     close.addEventListener('click', () => modal.classList.add('hidden'));
     window.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+}
+
+// --- Edit Metadata Modal Functions ---
+
+function populateEditWorkFronts() {
+    const select = document.getElementById('edit-work-front');
+    const mainSelect = document.getElementById('work-front');
+    if (!select || !mainSelect) return;
+    select.innerHTML = '';
+    Array.from(mainSelect.options).forEach(opt => {
+        const newOpt = document.createElement('option');
+        newOpt.value = opt.value;
+        newOpt.textContent = opt.textContent;
+        select.appendChild(newOpt);
+    });
+}
+
+function populateEditCoronamientos() {
+    const select = document.getElementById('edit-coronation');
+    const mainSelect = document.getElementById('coronation');
+    if (!select || !mainSelect) return;
+    select.innerHTML = '';
+    Array.from(mainSelect.options).forEach(opt => {
+        const newOpt = document.createElement('option');
+        newOpt.value = opt.value;
+        newOpt.textContent = opt.textContent;
+        select.appendChild(newOpt);
+    });
+}
+
+function populateEditObservationCategories() {
+    const select = document.getElementById('edit-observation-category');
+    const mainSelect = document.getElementById('observation-category');
+    if (!select || !mainSelect) return;
+    select.innerHTML = '';
+    Array.from(mainSelect.options).forEach(opt => {
+        const newOpt = document.createElement('option');
+        newOpt.value = opt.value;
+        newOpt.textContent = opt.textContent;
+        select.appendChild(newOpt);
+    });
+}
+
+function populateEditActivities() {
+    const container = document.getElementById('edit-activity-list');
+    const mainContainer = document.getElementById('activity-list');
+    if (!container || !mainContainer) return;
+    container.innerHTML = '';
+
+    Array.from(mainContainer.children).forEach(item => {
+        const mainCheckbox = item.querySelector('input');
+        const mainSpan = item.querySelector('span');
+        if (!mainCheckbox || !mainSpan) return;
+
+        const div = document.createElement('div');
+        div.className = 'activity-item';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = mainCheckbox.value;
+        checkbox.id = 'edit-act-' + mainCheckbox.value.replace(/\s+/g, '-').toLowerCase();
+
+        const span = document.createElement('span');
+        span.textContent = mainSpan.textContent;
+
+        div.appendChild(checkbox);
+        div.appendChild(span);
+
+        div.addEventListener('click', (e) => {
+            if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+                checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        });
+
+        container.appendChild(div);
+    });
+
+    const otherCheckbox = container.querySelector('input[value="otra-activity"]');
+    const otherGroup = document.getElementById('edit-other-activity-group');
+    if (otherCheckbox && otherGroup) {
+        otherCheckbox.addEventListener('change', () => {
+            if (otherCheckbox.checked) {
+                otherGroup.classList.remove('hidden');
+            } else {
+                otherGroup.classList.add('hidden');
+            }
+        });
+    }
+}
+
+async function openEditMetadataModal(photoId) {
+    currentEditPhotoId = photoId;
+    try {
+        const item = await getPhotoFromDB(photoId);
+        if (!item || !item.metadata) {
+            showStatus('No se pudieron cargar los metadatos.', 'error');
+            return;
+        }
+
+        const metadata = item.metadata;
+
+        populateEditWorkFronts();
+        populateEditCoronamientos();
+        populateEditObservationCategories();
+        populateEditActivities();
+
+        const workFrontSelect = document.getElementById('edit-work-front');
+        const otherWorkFrontGroup = document.getElementById('edit-other-work-front-group');
+        const otherWorkFrontInput = document.getElementById('edit-other-work-front');
+
+        const workFrontExists = Array.from(workFrontSelect.options).some(opt => opt.value === metadata.workFront);
+        if (workFrontExists) {
+            workFrontSelect.value = metadata.workFront || '';
+            otherWorkFrontGroup.classList.add('hidden');
+            otherWorkFrontInput.value = '';
+        } else if (metadata.workFront) {
+            workFrontSelect.value = 'otro';
+            otherWorkFrontGroup.classList.remove('hidden');
+            otherWorkFrontInput.value = metadata.workFront;
+        } else {
+            workFrontSelect.value = '';
+            otherWorkFrontGroup.classList.add('hidden');
+            otherWorkFrontInput.value = '';
+        }
+
+        document.getElementById('edit-coronation').value = metadata.coronation || '';
+        document.getElementById('edit-observation-category').value = metadata.observationCategory || '';
+
+        // Activities
+        if (metadata.activityPerformed) {
+            const activities = metadata.activityPerformed.split(', ').map(s => s.trim()).filter(Boolean);
+            const checkboxes = document.querySelectorAll('#edit-activity-list input[type="checkbox"]');
+            const standardValues = Array.from(checkboxes).map(cb => cb.value).filter(v => v !== 'otra-activity');
+            let customActivities = [];
+
+            checkboxes.forEach(cb => {
+                if (activities.includes(cb.value)) {
+                    cb.checked = true;
+                } else {
+                    cb.checked = false;
+                }
+            });
+
+            activities.forEach(act => {
+                if (!standardValues.includes(act)) {
+                    customActivities.push(act);
+                }
+            });
+
+            if (customActivities.length > 0) {
+                const otherCb = document.querySelector('#edit-activity-list input[value="otra-activity"]');
+                if (otherCb) {
+                    otherCb.checked = true;
+                    document.getElementById('edit-other-activity-group').classList.remove('hidden');
+                    document.getElementById('edit-other-activity').value = customActivities.join(', ');
+                }
+            } else {
+                document.getElementById('edit-other-activity-group').classList.add('hidden');
+                document.getElementById('edit-other-activity').value = '';
+            }
+        } else {
+            document.querySelectorAll('#edit-activity-list input[type="checkbox"]').forEach(cb => cb.checked = false);
+            document.getElementById('edit-other-activity-group').classList.add('hidden');
+            document.getElementById('edit-other-activity').value = '';
+        }
+
+        document.getElementById('edit-metadata-modal').classList.remove('hidden');
+    } catch (err) {
+        console.error('Error opening edit modal:', err);
+        showStatus('Error al abrir editor de metadatos.', 'error');
+    }
+}
+
+function closeEditMetadataModal() {
+    document.getElementById('edit-metadata-modal').classList.add('hidden');
+    currentEditPhotoId = null;
+}
+
+async function saveEditedMetadata() {
+    if (!currentEditPhotoId) return;
+
+    const workFrontSelect = document.getElementById('edit-work-front');
+    const workFront = workFrontSelect.value === 'otro' ?
+        document.getElementById('edit-other-work-front').value.trim() :
+        workFrontSelect.value;
+
+    const checkboxes = document.querySelectorAll('#edit-activity-list input[type="checkbox"]:checked');
+    let selectedActivities = [];
+    checkboxes.forEach(cb => {
+        if (cb.value === 'otra-activity') {
+            const customText = document.getElementById('edit-other-activity').value.trim();
+            if (customText) selectedActivities.push(customText);
+        } else {
+            selectedActivities.push(cb.value);
+        }
+    });
+
+    if (!workFront || !document.getElementById('edit-coronation').value || !document.getElementById('edit-observation-category').value) {
+        showStatus('Complete el formulario.', 'error');
+        return;
+    }
+
+    try {
+        const item = await getPhotoFromDB(currentEditPhotoId);
+        if (!item) throw new Error('Foto no encontrada');
+
+        const newMetadata = {
+            ...item.metadata,
+            workFront,
+            coronation: document.getElementById('edit-coronation').value,
+            activityPerformed: selectedActivities.join(', '),
+            observationCategory: document.getElementById('edit-observation-category').value
+        };
+
+        let imageDataUrl = item.image instanceof Blob ? await blobToDataURL(item.image) : item.image;
+
+        let exifObj;
+        try {
+            exifObj = piexif.load(imageDataUrl);
+        } catch (e) {
+            console.warn('Could not load EXIF, creating fresh:', e);
+            exifObj = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "thumbnail": null};
+        }
+
+        let userComment;
+        if (piexif.helper && piexif.helper.encodeToUnicode) {
+            try {
+                userComment = piexif.helper.encodeToUnicode(JSON.stringify(newMetadata));
+            } catch (e) {
+                userComment = "ASCII\0" + JSON.stringify(newMetadata);
+            }
+        } else {
+            userComment = "ASCII\0" + JSON.stringify(newMetadata);
+        }
+        exifObj["Exif"][piexif.ExifIFD.UserComment] = userComment;
+
+        const exifBytes = piexif.dump(exifObj);
+        const newImageDataUrl = piexif.insert(exifBytes, imageDataUrl);
+        const newBlob = dataURLtoBlob(newImageDataUrl);
+
+        await updatePhotoInDB(currentEditPhotoId, {
+            metadata: newMetadata,
+            image: newBlob
+        });
+
+        showStatus('Metadatos actualizados correctamente.', 'success');
+        closeEditMetadataModal();
+        loadGallery(true);
+    } catch (err) {
+        console.error('Error updating metadata:', err);
+        showStatus('Error al actualizar metadatos: ' + err.message, 'error');
+    }
 }
 
 function showStatus(msg, type) {

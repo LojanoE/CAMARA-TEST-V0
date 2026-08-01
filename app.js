@@ -436,6 +436,7 @@ async function downloadSelectedPhotos() {
         showStatus(`Iniciando descarga de ${total} fotos...`, 'info');
         const zip = new JSZip();
         const checkboxArray = Array.from(checkboxes);
+        const catalogEntries = [];
 
         for (let i = 0; i < checkboxArray.length; i++) {
             const cb = checkboxArray[i];
@@ -464,6 +465,12 @@ async function downloadSelectedPhotos() {
                     
                     if (processedBlob) {
                         zip.file(filename, processedBlob);
+                        catalogEntries.push({
+                            dataURL: await blobToDataURL(processedBlob),
+                            filename: filename,
+                            metadata: item.metadata || {},
+                            displayDate: item.displayDate || ''
+                        });
                         processed++;
                     } else {
                         console.error(`Failed to process photo ${currentPhotoId}`);
@@ -482,6 +489,9 @@ async function downloadSelectedPhotos() {
             elements.downloadSelectedBtn.disabled = false;
             return;
         }
+
+        elements.downloadSelectedBtn.innerHTML = 'Generando catálogo...';
+        zip.file('catalogo.html', buildCatalogHTML(catalogEntries));
 
         elements.downloadSelectedBtn.innerHTML = 'Comprimiendo ZIP...';
         showStatus('Generando archivo ZIP final...', 'info');
@@ -523,6 +533,120 @@ function blobToDataURL(blob) {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
     });
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+// Builds a self-contained HTML photo catalog (images embedded as data URLs so
+// the copy-to-clipboard canvas is never tainted when opened from file://)
+function buildCatalogHTML(entries) {
+    const cards = entries.map(entry => {
+        const m = entry.metadata || {};
+        // location can be flat ({latitude,...}) or GeolocationPosition-like ({coords:{...}})
+        const loc = m.location || {};
+        const coords = loc.coords || loc;
+
+        const details = [];
+        if (m.workFront) details.push(['Frente', m.workFront]);
+        if (m.coronation) details.push(['Coronamiento', m.coronation]);
+        if (m.activityPerformed) details.push(['Actividad', m.activityPerformed]);
+        if (m.observationCategory) details.push(['Categoría de observación', m.observationCategory]);
+        if (entry.displayDate) details.push(['Fecha', entry.displayDate]);
+        if (coords.latitude != null && coords.longitude != null) {
+            let gps = `${Number(coords.latitude).toFixed(6)}, ${Number(coords.longitude).toFixed(6)}`;
+            if (coords.accuracy != null) gps += ` (±${Math.round(coords.accuracy)} m)`;
+            details.push(['Coordenadas GPS', gps]);
+        }
+        if (coords.altitude != null) details.push(['Altitud', `${Math.round(coords.altitude)} m s.n.m.`]);
+        details.push(['Archivo', entry.filename]);
+
+        const rows = details.map(([label, value]) =>
+            `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`
+        ).join('');
+
+        return `      <div class="card">
+        <div class="img-wrap">
+          <img src="${entry.dataURL}" alt="${escapeHtml(entry.filename)}">
+          <button class="copy-btn" onclick="copyCardImage(this)">📋 Copiar imagen</button>
+        </div>
+        <div class="details">${rows}</div>
+      </div>`;
+    }).join('\n');
+
+    const generated = new Date().toLocaleString();
+
+    return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Catálogo Fotográfico GDR-CAM</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Roboto, Arial, sans-serif; background: #1A2230; color: #f8f9fa; padding: 20px; }
+  header { text-align: center; margin-bottom: 24px; }
+  header h1 { font-size: 1.4rem; color: #ffffff; }
+  header p { font-size: 0.85rem; color: #9fb0c7; margin-top: 4px; }
+  .catalog { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; max-width: 1100px; margin: 0 auto; }
+  .card { background: #232d3f; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+  .img-wrap { position: relative; }
+  .img-wrap img { display: block; width: 100%; height: auto; }
+  .copy-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,123,255,0.92); color: #fff;
+    border: none; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+  .copy-btn:hover { background: #0069d9; }
+  .copy-btn.copied { background: #28a745; }
+  .details { padding: 12px 14px; font-size: 0.85rem; }
+  .detail-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { color: #9fb0c7; min-width: 150px; flex-shrink: 0; }
+  .detail-value { color: #f8f9fa; word-break: break-word; }
+  @media (max-width: 500px) { .catalog { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>📷 Catálogo Fotográfico GDR-CAM</h1>
+    <p>Generado: ${escapeHtml(generated)} · ${entries.length} foto(s)</p>
+  </header>
+  <div class="catalog">
+${cards}
+  </div>
+<script>
+async function copyCardImage(btn) {
+  var original = btn.textContent;
+  try {
+    if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) {
+      throw new Error('Clipboard API no disponible');
+    }
+    var card = btn.closest('.card');
+    var img = card.querySelector('img');
+    if (!img.complete || img.naturalWidth === 0) {
+      await new Promise(function (res, rej) { img.onload = res; img.onerror = rej; });
+    }
+    var canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+    var blob = await new Promise(function (res) { canvas.toBlob(res, 'image/png'); });
+    if (!blob) throw new Error('No se pudo generar la imagen');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    btn.textContent = '✓ Copiada';
+    btn.classList.add('copied');
+  } catch (e) {
+    btn.textContent = '⚠ Clic derecho > Copiar imagen';
+  }
+  setTimeout(function () { btn.textContent = original; btn.classList.remove('copied'); }, 2500);
+}
+</scr` + `ipt>
+</body>
+</html>`;
 }
 
 // Wrapper to handle Worker communication as a Promise with Timeout

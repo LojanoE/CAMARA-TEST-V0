@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v22-0-metadata-edit'; // Version v22.0 - Metadata edit support
+const CACHE_NAME = 'cam-test-v22-1-html-catalog'; // Version v22.1 - HTML photo catalog in ZIP export
 const ASSETS = [
   './',
   './index.html',

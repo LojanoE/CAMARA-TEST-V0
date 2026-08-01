@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v22-2-gallery-catalog'; // Version v22.2 - Gallery-style HTML catalog with lightbox
+const CACHE_NAME = 'cam-test-v22-3-catalog-4col'; // Version v22.3 - Catalog grid 4 columns
 const ASSETS = [
   './',
   './index.html',

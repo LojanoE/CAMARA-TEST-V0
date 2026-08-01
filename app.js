@@ -613,7 +613,7 @@ function buildCatalogHTML(entries) {
   header { text-align: center; margin-bottom: 14px; }
   header h1 { font-size: 1.3rem; color: #ffffff; }
   header p { font-size: 0.85rem; color: #9fb0c7; margin-top: 4px; }
-  .catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; max-width: 1200px; margin: 0 auto; }
+  .catalog { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 1200px; margin: 0 auto; }
   .thumb { aspect-ratio: 1; border-radius: 6px; overflow: hidden; cursor: pointer; background: #232d3f; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.15s; }
   .thumb:hover img { transform: scale(1.04); }
@@ -641,7 +641,7 @@ function buildCatalogHTML(entries) {
   .detail-value { color: #f8f9fa; word-break: break-word; }
   @media (max-width: 600px) {
     body { padding: 6px; }
-    .catalog { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .catalog { grid-template-columns: repeat(2, 1fr); gap: 4px; }
     .detail-label { min-width: 110px; }
   }
 </style>

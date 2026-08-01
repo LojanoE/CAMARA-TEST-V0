@@ -8,7 +8,7 @@ The app allows users to:
 - Capture photos using the device's native camera (`capture="environment"`).
 - Automatically stamp images with GPS coordinates, cardinal direction (north arrow), timestamp, and form data (work front, coronamiento, observation category, activity).
 - Store photos locally in IndexedDB as Blobs (not DataURLs) to avoid storage quota issues.
-- Export single photos as JPG or bulk selections as a ZIP archive via a background Web Worker. Multi-photo ZIP exports also include a self-contained `catalogo.html`: a 2-column photo catalog with details under each photo and a per-photo "Copiar imagen" button (clipboard copy for photographic reports).
+- Export single photos as JPG or bulk selections as a ZIP archive via a background Web Worker. Multi-photo ZIP exports also include a self-contained `catalogo.html`: a phone-gallery-style catalog (square thumbnail grid, 4 per row on desktop / 3 on mobile) with a lightbox per photo showing details and a "Copiar imagen" clipboard button. Catalog images are downscaled to max 1600 px to keep the HTML light (~40 photos ≈ 20-30 MB); the JPGs in the ZIP stay full resolution.
 - Manage work fronts, activities, and coronamientos through an embedded admin panel that syncs with Supabase when connectivity allows.
 
 ---
@@ -160,7 +160,7 @@ Triggers automatically update `updated_at` on row modifications.
 - **Cache invalidation** — The `CACHE_NAME` constant in `sw.js` must be bumped on every deploy. Failure to do so will leave users with stale cached assets.
 - **PWA scope** — `manifest.json` and `sw.js` must remain in the same directory as `index.html`.
 - **Legacy file** — `app22.js` is not loaded by `index.html`. Do not edit it expecting runtime changes.
-- **Catalog HTML** — `buildCatalogHTML()` (app.js) embeds photos as base64 data URLs inside `catalogo.html`. Do not switch to relative JPG paths: drawing a `file://`-loaded image to canvas taints it, which breaks the "Copiar imagen" clipboard feature.
+- **Catalog HTML** — `buildCatalogHTML()` (app.js) embeds photos as base64 data URLs inside `catalogo.html`, downscaled via `downscaleForCatalog()` (max 1600 px, JPEG 0.85). Do not switch to relative JPG paths: drawing a `file://`-loaded image to canvas taints it, which breaks the "Copiar imagen" clipboard feature in the lightbox.
 
 ---
 

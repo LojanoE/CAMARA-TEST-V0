@@ -466,7 +466,7 @@ async function downloadSelectedPhotos() {
                     if (processedBlob) {
                         zip.file(filename, processedBlob);
                         catalogEntries.push({
-                            dataURL: await blobToDataURL(processedBlob),
+                            dataURL: await downscaleForCatalog(await blobToDataURL(processedBlob)),
                             filename: filename,
                             metadata: item.metadata || {},
                             displayDate: item.displayDate || ''
@@ -535,6 +535,27 @@ function blobToDataURL(blob) {
     });
 }
 
+// Downscales an image data URL so its longest side is <= maxDim (keeps the
+// generated catalog HTML light when exporting many photos)
+function downscaleForCatalog(dataURL, maxDim = 1600, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+            const scale = Math.min(1, maxDim / Math.max(width, height));
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = dataURL;
+    });
+}
+
 function escapeHtml(str) {
     return String(str)
         .replace(/&/g, '&amp;')
@@ -543,10 +564,12 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-// Builds a self-contained HTML photo catalog (images embedded as data URLs so
-// the copy-to-clipboard canvas is never tainted when opened from file://)
+// Builds a self-contained HTML photo catalog, phone-gallery style: square
+// thumbnail grid + lightbox with details and a copy-to-clipboard button.
+// Images are embedded as data URLs so the copy canvas is never tainted when
+// the file is opened from file://
 function buildCatalogHTML(entries) {
-    const cards = entries.map(entry => {
+    const thumbs = entries.map((entry, idx) => {
         const m = entry.metadata || {};
         // location can be flat ({latitude,...}) or GeolocationPosition-like ({coords:{...}})
         const loc = m.location || {};
@@ -570,12 +593,9 @@ function buildCatalogHTML(entries) {
             `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`
         ).join('');
 
-        return `      <div class="card">
-        <div class="img-wrap">
-          <img src="${entry.dataURL}" alt="${escapeHtml(entry.filename)}">
-          <button class="copy-btn" onclick="copyCardImage(this)">📋 Copiar imagen</button>
-        </div>
-        <div class="details">${rows}</div>
+        return `      <div class="thumb" data-idx="${idx}">
+        <img src="${entry.dataURL}" alt="${escapeHtml(entry.filename)}" loading="lazy">
+        <div class="details" hidden>${rows}</div>
       </div>`;
     }).join('\n');
 
@@ -589,44 +609,107 @@ function buildCatalogHTML(entries) {
 <title>Catálogo Fotográfico GDR-CAM</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: Roboto, Arial, sans-serif; background: #1A2230; color: #f8f9fa; padding: 20px; }
-  header { text-align: center; margin-bottom: 24px; }
-  header h1 { font-size: 1.4rem; color: #ffffff; }
+  body { font-family: Roboto, Arial, sans-serif; background: #1A2230; color: #f8f9fa; padding: 12px; }
+  header { text-align: center; margin-bottom: 14px; }
+  header h1 { font-size: 1.3rem; color: #ffffff; }
   header p { font-size: 0.85rem; color: #9fb0c7; margin-top: 4px; }
-  .catalog { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; max-width: 1100px; margin: 0 auto; }
-  .card { background: #232d3f; border-radius: 10px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
-  .img-wrap { position: relative; }
-  .img-wrap img { display: block; width: 100%; height: auto; }
+  .catalog { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; max-width: 1200px; margin: 0 auto; }
+  .thumb { aspect-ratio: 1; border-radius: 6px; overflow: hidden; cursor: pointer; background: #232d3f; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.15s; }
+  .thumb:hover img { transform: scale(1.04); }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.93); z-index: 100; display: flex; align-items: center; justify-content: center; }
+  .lightbox[hidden] { display: none; }
+  .lb-content { max-width: 900px; width: 100%; max-height: 100vh; overflow-y: auto; padding: 16px; }
+  .lb-img-wrap { position: relative; text-align: center; }
+  .lb-img-wrap img { max-width: 100%; max-height: 62vh; object-fit: contain; border-radius: 6px; }
+  .lb-details { margin-top: 10px; background: #232d3f; border-radius: 8px; padding: 12px 14px; font-size: 0.85rem; }
+  .lb-counter { text-align: center; color: #9fb0c7; font-size: 0.8rem; margin-top: 8px; }
+  .lb-close, .lb-nav { position: absolute; background: rgba(73,101,150,0.7); color: #fff; border: none; cursor: pointer; z-index: 101; }
+  .lb-close { top: 12px; right: 12px; width: 40px; height: 40px; border-radius: 50%; font-size: 1.1rem; }
+  .lb-nav { top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%; font-size: 1.6rem; line-height: 1; }
+  .lb-prev { left: 10px; }
+  .lb-next { right: 10px; }
+  .lb-close:hover, .lb-nav:hover { background: #007bff; }
   .copy-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,123,255,0.92); color: #fff;
     border: none; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
     box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
   .copy-btn:hover { background: #0069d9; }
   .copy-btn.copied { background: #28a745; }
-  .details { padding: 12px 14px; font-size: 0.85rem; }
   .detail-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
   .detail-row:last-child { border-bottom: none; }
   .detail-label { color: #9fb0c7; min-width: 150px; flex-shrink: 0; }
   .detail-value { color: #f8f9fa; word-break: break-word; }
-  @media (max-width: 500px) { .catalog { grid-template-columns: 1fr; } }
+  @media (max-width: 600px) {
+    body { padding: 6px; }
+    .catalog { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .detail-label { min-width: 110px; }
+  }
 </style>
 </head>
 <body>
   <header>
     <h1>📷 Catálogo Fotográfico GDR-CAM</h1>
-    <p>Generado: ${escapeHtml(generated)} · ${entries.length} foto(s)</p>
+    <p>Generado: ${escapeHtml(generated)} · ${entries.length} foto(s) · Toca una foto para ver detalles</p>
   </header>
   <div class="catalog">
-${cards}
+${thumbs}
+  </div>
+  <div id="lightbox" class="lightbox" hidden>
+    <button class="lb-close" onclick="closeLightbox()">✕</button>
+    <button class="lb-nav lb-prev" onclick="navLightbox(-1)">‹</button>
+    <button class="lb-nav lb-next" onclick="navLightbox(1)">›</button>
+    <div class="lb-content">
+      <div class="lb-img-wrap">
+        <img id="lb-img" src="" alt="">
+        <button class="copy-btn" onclick="copyCardImage(this)">📋 Copiar imagen</button>
+      </div>
+      <div class="lb-counter" id="lb-counter"></div>
+      <div class="details lb-details" id="lb-details"></div>
+    </div>
   </div>
 <script>
+var thumbs = Array.prototype.slice.call(document.querySelectorAll('.thumb'));
+var currentIdx = 0;
+var lightbox = document.getElementById('lightbox');
+var lbImg = document.getElementById('lb-img');
+var lbDetails = document.getElementById('lb-details');
+var lbCounter = document.getElementById('lb-counter');
+
+thumbs.forEach(function (t) {
+  t.addEventListener('click', function () { openLightbox(Number(t.dataset.idx)); });
+});
+
+function openLightbox(idx) {
+  currentIdx = idx;
+  var t = thumbs[idx];
+  lbImg.src = t.querySelector('img').src;
+  lbDetails.innerHTML = t.querySelector('.details').innerHTML;
+  lbCounter.textContent = (idx + 1) + ' / ' + thumbs.length;
+  lightbox.hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+function closeLightbox() {
+  lightbox.hidden = true;
+  document.body.style.overflow = '';
+}
+function navLightbox(delta) {
+  openLightbox((currentIdx + delta + thumbs.length) % thumbs.length);
+}
+lightbox.addEventListener('click', function (e) { if (e.target === lightbox) closeLightbox(); });
+document.addEventListener('keydown', function (e) {
+  if (lightbox.hidden) return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') navLightbox(-1);
+  if (e.key === 'ArrowRight') navLightbox(1);
+});
+
 async function copyCardImage(btn) {
   var original = btn.textContent;
   try {
     if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) {
       throw new Error('Clipboard API no disponible');
     }
-    var card = btn.closest('.card');
-    var img = card.querySelector('img');
+    var img = btn.parentElement.querySelector('img');
     if (!img.complete || img.naturalWidth === 0) {
       await new Promise(function (res, rej) { img.onload = res; img.onerror = rej; });
     }

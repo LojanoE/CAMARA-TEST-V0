@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v22-1-html-catalog'; // Version v22.1 - HTML photo catalog in ZIP export
+const CACHE_NAME = 'cam-test-v22-2-gallery-catalog'; // Version v22.2 - Gallery-style HTML catalog with lightbox
 const ASSETS = [
   './',
   './index.html',

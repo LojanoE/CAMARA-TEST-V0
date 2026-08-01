@@ -613,6 +613,12 @@ function buildCatalogHTML(entries) {
   header { text-align: center; margin-bottom: 14px; }
   header h1 { font-size: 1.3rem; color: #ffffff; }
   header p { font-size: 0.85rem; color: #9fb0c7; margin-top: 4px; }
+  .search-bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .search-bar input { flex: 1; min-width: 150px; max-width: 320px; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid #496596; background: #232d3f; color: #f8f9fa; font-size: 0.95rem; }
+  .search-bar input:focus { outline: none; border-color: #007bff; }
+  .search-bar input::placeholder { color: #9fb0c7; }
+  .search-count { text-align: center; color: #9fb0c7; font-size: 0.8rem; margin-bottom: 8px; min-height: 1em; }
   .catalog { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 1200px; margin: 0 auto; }
   .thumb { aspect-ratio: 1; border-radius: 6px; overflow: hidden; cursor: pointer; background: #232d3f; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.15s; }
@@ -651,6 +657,11 @@ function buildCatalogHTML(entries) {
     <h1>📷 Catálogo Fotográfico GDR-CAM</h1>
     <p>Generado: ${escapeHtml(generated)} · ${entries.length} foto(s) · Toca una foto para ver detalles</p>
   </header>
+  <div class="search-bar">
+    <input type="search" id="search1" placeholder="🔍 Buscar (frente, actividad, fecha...)" oninput="filterThumbs()">
+    <input type="search" id="search2" placeholder="🔍 Buscar..." oninput="filterThumbs()">
+  </div>
+  <p class="search-count" id="search-count"></p>
   <div class="catalog">
 ${thumbs}
   </div>
@@ -669,22 +680,43 @@ ${thumbs}
   </div>
 <script>
 var thumbs = Array.prototype.slice.call(document.querySelectorAll('.thumb'));
+var visibleThumbs = thumbs.slice();
 var currentIdx = 0;
 var lightbox = document.getElementById('lightbox');
 var lbImg = document.getElementById('lb-img');
 var lbDetails = document.getElementById('lb-details');
 var lbCounter = document.getElementById('lb-counter');
+var searchCount = document.getElementById('search-count');
+
+// accent-insensitive normalization (búscar == buscar)
+function norm(s) {
+  return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function filterThumbs() {
+  var q1 = norm(document.getElementById('search1').value.trim());
+  var q2 = norm(document.getElementById('search2').value.trim());
+  visibleThumbs = [];
+  thumbs.forEach(function (t) {
+    var text = norm(t.textContent);
+    var show = (!q1 || text.indexOf(q1) !== -1) && (!q2 || text.indexOf(q2) !== -1);
+    t.style.display = show ? '' : 'none';
+    if (show) visibleThumbs.push(t);
+  });
+  searchCount.textContent = (q1 || q2) ? visibleThumbs.length + ' de ' + thumbs.length + ' foto(s)' : '';
+}
 
 thumbs.forEach(function (t) {
-  t.addEventListener('click', function () { openLightbox(Number(t.dataset.idx)); });
+  t.addEventListener('click', function () { openLightbox(visibleThumbs.indexOf(t)); });
 });
 
 function openLightbox(idx) {
+  if (idx < 0 || idx >= visibleThumbs.length) return;
   currentIdx = idx;
-  var t = thumbs[idx];
+  var t = visibleThumbs[idx];
   lbImg.src = t.querySelector('img').src;
   lbDetails.innerHTML = t.querySelector('.details').innerHTML;
-  lbCounter.textContent = (idx + 1) + ' / ' + thumbs.length;
+  lbCounter.textContent = (idx + 1) + ' / ' + visibleThumbs.length;
   lightbox.hidden = false;
   document.body.style.overflow = 'hidden';
 }
@@ -693,7 +725,8 @@ function closeLightbox() {
   document.body.style.overflow = '';
 }
 function navLightbox(delta) {
-  openLightbox((currentIdx + delta + thumbs.length) % thumbs.length);
+  if (!visibleThumbs.length) return;
+  openLightbox((currentIdx + delta + visibleThumbs.length) % visibleThumbs.length);
 }
 lightbox.addEventListener('click', function (e) { if (e.target === lightbox) closeLightbox(); });
 document.addEventListener('keydown', function (e) {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'cam-test-v22-3-catalog-4col'; // Version v22.3 - Catalog grid 4 columns
+const CACHE_NAME = 'cam-test-v22-4-catalog-search'; // Version v22.4 - Catalog search bars
 const ASSETS = [
   './',
   './index.html',

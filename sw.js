@@ -1,9 +1,10 @@
-const CACHE_NAME = 'cam-test-v22-4-catalog-search'; // Version v22.4 - Catalog search bars
+const CACHE_NAME = 'cam-test-v22-5-export-memory'; // Version v22.5 - Low-memory bulk export + catalog download button
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './imageProcessorWorker.js',
   './exif.js',
   './piexif.js',
   './jszip.min.js',

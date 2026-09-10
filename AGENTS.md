@@ -8,7 +8,7 @@ The app allows users to:
 - Capture photos using the device's native camera (`capture="environment"`).
 - Automatically stamp images with GPS coordinates, cardinal direction (north arrow), timestamp, and form data (work front, coronamiento, observation category, activity).
 - Store photos locally in IndexedDB as Blobs (not DataURLs) to avoid storage quota issues.
-- Export single photos as JPG or bulk selections as a ZIP archive via a background Web Worker. Multi-photo ZIP exports also include a self-contained `catalogo.html`: a phone-gallery-style catalog (square thumbnail grid, 4 per row on desktop / 2 on mobile) with a lightbox per photo showing details and a "Copiar imagen" clipboard button. Two search bars at the top filter photos by any metadata field (accent-insensitive, AND-combined); the lightbox navigates only within filtered results. Catalog images are downscaled to max 1600 px to keep the HTML light (~40 photos ≈ 20-30 MB); the JPGs in the ZIP stay full resolution.
+- Export single photos as JPG or bulk selections as a ZIP archive via a background Web Worker. Multi-photo ZIP exports also include a self-contained `catalogo.html`: a phone-gallery-style catalog (square thumbnail grid, 4 per row on desktop / 2 on mobile) with a lightbox per photo showing details plus "Copiar imagen" (clipboard) and "Descargar" (saves the embedded image as `GDR_..._IDn.jpg`) buttons. Two search bars at the top filter photos by any metadata field (accent-insensitive, AND-combined); the lightbox navigates only within filtered results. Catalog images are downscaled to max 1600 px to keep the HTML light (~40 photos ≈ 20-30 MB); the JPGs in the ZIP stay full resolution.
 - Manage work fronts, activities, and coronamientos through an embedded admin panel that syncs with Supabase when connectivity allows.
 
 ---
@@ -88,7 +88,7 @@ Current version: `3`
 - **Web Workers & OffscreenCanvas** — non-blocking image processing for bulk exports.
 - **File API / FileReader / Blob** — image handling and conversion.
 - **piexif.js** — EXIF metadata manipulation in JPEGs.
-- **JSZip + FileSaver.js** — local ZIP generation and downloads (vendored).
+- **JSZip + FileSaver.js** — vendored; FileSaver handles downloads. Bulk ZIP exports use the built-in `createStoreZipWriter()` (app.js) instead of JSZip to keep memory low.
 - **Supabase Client v2 (UMD from CDN)** — cloud backend for frentes/actividades/coronamientos.
 - **Font Awesome 6 (CDN)** — icons.
 - **Google Fonts: Roboto (CDN)** — typography.
@@ -160,7 +160,8 @@ Triggers automatically update `updated_at` on row modifications.
 - **Cache invalidation** — The `CACHE_NAME` constant in `sw.js` must be bumped on every deploy. Failure to do so will leave users with stale cached assets.
 - **PWA scope** — `manifest.json` and `sw.js` must remain in the same directory as `index.html`.
 - **Legacy file** — `app22.js` is not loaded by `index.html`. Do not edit it expecting runtime changes.
-- **Catalog HTML** — `buildCatalogHTML()` (app.js) embeds photos as base64 data URLs inside `catalogo.html`, downscaled via `downscaleForCatalog()` (max 1600 px, JPEG 0.85). Do not switch to relative JPG paths: drawing a `file://`-loaded image to canvas taints it, which breaks the "Copiar imagen" clipboard feature in the lightbox.
+- **Bulk export memory** — Exporting 50+ photos used to crash mobile browsers (OOM → app reload). `downloadSelectedPhotos()` now processes one photo at a time and accumulates **only Blobs**: the worker receives/returns Blobs (EXIF handled as binary strings, no base64), the ZIP is assembled by `createStoreZipWriter()` (app.js, STORE-only, references the photo Blobs without copying, no ZIP64 → 4 GB limit) and the catalog is a Blob built from per-photo fragments. Do not reintroduce `JSZip.generateAsync`, data URLs in the loop, or a single catalog string.
+- **Catalog HTML** — The worker produces the downscaled catalog copy (`CATALOG_MAX_DIM` 1600 px, JPEG 0.85 in `imageProcessorWorker.js`); `buildCatalogThumbHTML()` embeds it as a base64 data URL and `buildCatalogBlob()` assembles `catalogo.html`. Do not switch to relative JPG paths: drawing a `file://`-loaded image to canvas taints it, which breaks the "Copiar imagen" clipboard feature in the lightbox. The "Descargar" button saves that same embedded image (not the full-resolution JPG) using the filename stored in `data-filename`.
 
 ---
 

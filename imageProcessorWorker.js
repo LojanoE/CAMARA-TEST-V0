@@ -24,168 +24,168 @@ if (typeof piexif === 'undefined') {
     }
 }
 
-// Helper to convert DataURL to Blob for FileSaver
-function dataURLtoBlob(dataurl) {
-    var arr = dataurl.split(','), mime = arr[0].match(/:(.*?);/)[1],
-        bstr = atob(arr[1]), n = bstr.length, u8arr = new Uint8Array(n);
-    while(n--){ u8arr[n] = bstr.charCodeAt(n); }
-    return new Blob([u8arr], {type:mime});
+// Longest side (px) and JPEG quality of the copy embedded in catalogo.html
+const CATALOG_MAX_DIM = 1600;
+const CATALOG_QUALITY = 0.85;
+
+// piexif accepts JPEG "binary strings" (one char per byte). Working with them
+// instead of base64 data URLs avoids the extra copies that exhausted memory
+// on bulk exports. Converted in chunks to stay under argument-count limits.
+function bytesToBinaryString(bytes) {
+    const CHUNK = 0x8000;
+    let result = '';
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+        result += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return result;
+}
+
+function binaryStringToBytes(str) {
+    const bytes = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+        bytes[i] = str.charCodeAt(i);
+    }
+    return bytes;
+}
+
+async function blobToBinaryString(blob) {
+    return bytesToBinaryString(new Uint8Array(await blob.arrayBuffer()));
 }
 
 // --- ENHANCED OVERLAY LOGIC FROM ADAPTED CODE ---
-async function addTimestampAndLogoToImage(imageUrl) {
-    return new Promise(async (resolve, reject) => {
-        try {
-            // Optimization: Use direct conversion instead of fetch for Data URLs
-            // This is more robust in Workers.
-            const blob = dataURLtoBlob(imageUrl);
-            
-            // Use createImageBitmap which is available in Workers
-            const imgBitmap = await createImageBitmap(blob);
+function drawOverlays(canvas, ctx, exifObj) {
+    const canvasWidth = canvas.width;
+    const canvasHeight = canvas.height;
+    const padding = Math.min(25, canvasWidth * 0.02, canvasHeight * 0.02);
 
-            const canvas = new OffscreenCanvas(imgBitmap.width, imgBitmap.height);
-            const ctx = canvas.getContext('2d');
-            
-            // Set canvas dimensions
-            canvas.width = imgBitmap.width;
-            canvas.height = imgBitmap.height;
-            
-            // Draw the image on the canvas
-            ctx.drawImage(imgBitmap, 0, 0);
-            
-            // Important: Close the bitmap to release memory
-            imgBitmap.close(); 
-            
-            // Load existing EXIF to preserve it
-            const exifObj = piexif.load(imageUrl);
-            
-            const drawOverlays = () => {
-                const canvasWidth = canvas.width;
-                const canvasHeight = canvas.height;
-                const padding = Math.min(25, canvasWidth * 0.02, canvasHeight * 0.02); 
+    // Draw north direction indicator (Bottom Center)
+    const fontSize = Math.min(80, Math.max(20, Math.floor(canvasHeight * 0.04)));
+    ctx.font = `bold ${fontSize}px Arial`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
 
-                // Draw north direction indicator (Bottom Center)
-                const fontSize = Math.min(80, Math.max(20, Math.floor(canvasHeight * 0.04))); 
-                ctx.font = `bold ${fontSize}px Arial`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'bottom';
+    const centerX = canvasWidth / 2;
 
-                const centerX = canvasWidth / 2;
-                
-                // Position calculations
-                // 1. Coordinates at the bottom with padding
-                const coordsY = canvasHeight - padding;
-                
-                // 2. Arrow above the coordinates
-                // Shift up by fontSize + padding
-                const arrowY = coordsY - fontSize - (padding / 2);
+    // Position calculations
+    // 1. Coordinates at the bottom with padding
+    const coordsY = canvasHeight - padding;
 
-                // Extract GPS data from EXIF if available
-                let gpsInfo = 'N'; 
-                
-                if (exifObj.GPS) {
-                    let lat = null, lng = null;
-                    let latRef = null, lngRef = null;
-                    
-                    if (exifObj.GPS[piexif.GPSIFD.GPSLatitude]) {
-                        const gpsLat = exifObj.GPS[piexif.GPSIFD.GPSLatitude];
-                        if (Array.isArray(gpsLat) && gpsLat.length === 3) {
-                            const deg = gpsLat[0][0] / gpsLat[0][1];
-                            const min = gpsLat[1][0] / gpsLat[1][1];
-                            const sec = gpsLat[2][0] / gpsLat[2][1];
-                            lat = deg + (min / 60) + (sec / 3600);
-                        }
-                    }
-                    
-                    if (exifObj.GPS[piexif.GPSIFD.GPSLongitude]) {
-                        const gpsLng = exifObj.GPS[piexif.GPSIFD.GPSLongitude];
-                        if (Array.isArray(gpsLng) && gpsLng.length === 3) {
-                            const deg = gpsLng[0][0] / gpsLng[0][1];
-                            const min = gpsLng[1][0] / gpsLng[1][1];
-                            const sec = gpsLng[2][0] / gpsLng[2][1];
-                            lng = deg + (min / 60) + (sec / 3600);
-                        }
-                    }
-                    
-                    latRef = exifObj.GPS[piexif.GPSIFD.GPSLatitudeRef];
-                    lngRef = exifObj.GPS[piexif.GPSIFD.GPSLongitudeRef];
-                    
-                    if (lat !== null && lng !== null && latRef && lngRef) {
-                        gpsInfo = `N ${Math.abs(lat).toFixed(6)}° ${latRef}, ${Math.abs(lng).toFixed(6)}° ${lngRef}`;
-                        
-                        if (exifObj.GPS[piexif.GPSIFD.GPSDOP]) {
-                            const dop = exifObj.GPS[piexif.GPSIFD.GPSDOP];
-                            if (Array.isArray(dop) && dop[1] !== 0) {
-                                const accuracy = (dop[0] / dop[1]).toFixed(1);
-                                gpsInfo += ` (±${accuracy}m)`;
-                            }
-                        }
-                    }
-                }
-                
-                // Draw North Arrow
-                ctx.fillStyle = 'white';
-                ctx.strokeStyle = 'black';
-                ctx.lineWidth = Math.max(1, fontSize / 20); 
-                ctx.strokeText('⬆', centerX, arrowY);
-                ctx.fillText('⬆', centerX, arrowY);
-                
-                // Draw GPS info
-                ctx.strokeText(gpsInfo, centerX, coordsY);
-                ctx.fillText(gpsInfo, centerX, coordsY);
-                
-                // Draw Timestamp (Bottom Right)
-                const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
-                    ? exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal] 
-                    : new Date().toLocaleString();
+    // 2. Arrow above the coordinates
+    // Shift up by fontSize + padding
+    const arrowY = coordsY - fontSize - (padding / 2);
 
-                ctx.textAlign = 'right';
-                const timestampX = canvasWidth - padding;
-                const timestampY = canvasHeight - padding;
-                
-                ctx.strokeText(timestamp, timestampX, timestampY);
-                ctx.fillText(timestamp, timestampX, timestampY);
+    // Extract GPS data from EXIF if available
+    let gpsInfo = 'N';
 
-                // Convert OffscreenCanvas to Blob
-                canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })
-                      .then(blob => {
-                            // Re-insert EXIF data
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                try {
-                                    const processedDataUrl = piexif.insert(piexif.dump(exifObj), reader.result);
-                                    resolve(processedDataUrl);
-                                } catch (exifError) {
-                                    console.error("EXIF re-insertion failed in worker:", exifError);
-                                    reject(exifError);
-                                }
-                            };
-                            reader.onerror = reject;
-                            reader.readAsDataURL(blob);
-                      })
-                      .catch(reject);
-            };
-            
-            drawOverlays();
+    if (exifObj.GPS) {
+        let lat = null, lng = null;
+        let latRef = null, lngRef = null;
 
-        } catch (err) {
-            reject(new Error('Error processing image in worker: ' + err.message));
+        if (exifObj.GPS[piexif.GPSIFD.GPSLatitude]) {
+            const gpsLat = exifObj.GPS[piexif.GPSIFD.GPSLatitude];
+            if (Array.isArray(gpsLat) && gpsLat.length === 3) {
+                const deg = gpsLat[0][0] / gpsLat[0][1];
+                const min = gpsLat[1][0] / gpsLat[1][1];
+                const sec = gpsLat[2][0] / gpsLat[2][1];
+                lat = deg + (min / 60) + (sec / 3600);
+            }
         }
-    });
+
+        if (exifObj.GPS[piexif.GPSIFD.GPSLongitude]) {
+            const gpsLng = exifObj.GPS[piexif.GPSIFD.GPSLongitude];
+            if (Array.isArray(gpsLng) && gpsLng.length === 3) {
+                const deg = gpsLng[0][0] / gpsLng[0][1];
+                const min = gpsLng[1][0] / gpsLng[1][1];
+                const sec = gpsLng[2][0] / gpsLng[2][1];
+                lng = deg + (min / 60) + (sec / 3600);
+            }
+        }
+
+        latRef = exifObj.GPS[piexif.GPSIFD.GPSLatitudeRef];
+        lngRef = exifObj.GPS[piexif.GPSIFD.GPSLongitudeRef];
+
+        if (lat !== null && lng !== null && latRef && lngRef) {
+            gpsInfo = `N ${Math.abs(lat).toFixed(6)}° ${latRef}, ${Math.abs(lng).toFixed(6)}° ${lngRef}`;
+
+            if (exifObj.GPS[piexif.GPSIFD.GPSDOP]) {
+                const dop = exifObj.GPS[piexif.GPSIFD.GPSDOP];
+                if (Array.isArray(dop) && dop[1] !== 0) {
+                    const accuracy = (dop[0] / dop[1]).toFixed(1);
+                    gpsInfo += ` (±${accuracy}m)`;
+                }
+            }
+        }
+    }
+
+    // Draw North Arrow
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = Math.max(1, fontSize / 20);
+    ctx.strokeText('⬆', centerX, arrowY);
+    ctx.fillText('⬆', centerX, arrowY);
+
+    // Draw GPS info
+    ctx.strokeText(gpsInfo, centerX, coordsY);
+    ctx.fillText(gpsInfo, centerX, coordsY);
+
+    // Draw Timestamp (Bottom Right)
+    const timestamp = exifObj['Exif'] && exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal]
+        ? exifObj['Exif'][piexif.ExifIFD.DateTimeOriginal]
+        : new Date().toLocaleString();
+
+    ctx.textAlign = 'right';
+    const timestampX = canvasWidth - padding;
+    const timestampY = canvasHeight - padding;
+
+    ctx.strokeText(timestamp, timestampX, timestampY);
+    ctx.fillText(timestamp, timestampX, timestampY);
+}
+
+// Returns the full-resolution stamped JPEG (original EXIF preserved) and a
+// downscaled copy for the catalog, both as Blobs
+async function processImage(imageBlob) {
+    // Use createImageBitmap which is available in Workers
+    const imgBitmap = await createImageBitmap(imageBlob);
+
+    const canvas = new OffscreenCanvas(imgBitmap.width, imgBitmap.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(imgBitmap, 0, 0);
+
+    // Important: Close the bitmap to release memory
+    imgBitmap.close();
+
+    // Load existing EXIF to preserve it
+    const exifObj = piexif.load(await blobToBinaryString(imageBlob));
+
+    drawOverlays(canvas, ctx, exifObj);
+
+    // Full-resolution JPEG with EXIF re-inserted
+    const jpegBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 });
+    const jpegWithExif = piexif.insert(piexif.dump(exifObj), await blobToBinaryString(jpegBlob));
+    const processedBlob = new Blob([binaryStringToBytes(jpegWithExif)], { type: 'image/jpeg' });
+
+    // Downscaled copy for catalogo.html
+    const scale = Math.min(1, CATALOG_MAX_DIM / Math.max(canvas.width, canvas.height));
+    const thumb = new OffscreenCanvas(Math.round(canvas.width * scale), Math.round(canvas.height * scale));
+    thumb.getContext('2d').drawImage(canvas, 0, 0, thumb.width, thumb.height);
+    const catalogBlob = await thumb.convertToBlob({ type: 'image/jpeg', quality: CATALOG_QUALITY });
+
+    // Release canvas backing stores right away (Safari holds them otherwise)
+    canvas.width = canvas.height = 0;
+    thumb.width = thumb.height = 0;
+
+    return { processedBlob, catalogBlob };
 }
 
 // Listen for messages from the main thread
 self.onmessage = async (event) => {
-    const { id, imageDataUrl } = event.data;
+    const { id, imageBlob } = event.data;
     try {
-        const processedDataUrl = await addTimestampAndLogoToImage(imageDataUrl);
-        const processedBlob = dataURLtoBlob(processedDataUrl);
-        // Transfer the Blob back to the main thread
-        // Note: Blobs are cloneable, not transferable in the strict sense like ArrayBuffers, 
-        // but passing them is efficient.
-        self.postMessage({ id, processedBlob }); 
+        const { processedBlob, catalogBlob } = await processImage(imageBlob);
+        // Blobs are passed by reference, the bytes are not copied
+        self.postMessage({ id, processedBlob, catalogBlob });
     } catch (error) {
         console.error('Error processing image in worker:', error);
-        self.postMessage({ id, error: error.message });
+        self.postMessage({ id, error: 'Error processing image in worker: ' + error.message });
     }
 };

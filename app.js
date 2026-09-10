@@ -29,10 +29,10 @@ const imageProcessorWorker = new Worker('./imageProcessorWorker.js');
 const workerPromises = new Map();
 
 imageProcessorWorker.onmessage = (event) => {
-    const { id, processedBlob, error } = event.data;
+    const { id, processedBlob, catalogBlob, error } = event.data;
     if (workerPromises.has(id)) {
         if (processedBlob) {
-            workerPromises.get(id).resolve(processedBlob);
+            workerPromises.get(id).resolve({ processedBlob, catalogBlob });
         } else if (error) {
             workerPromises.get(id).reject(new Error(error));
         }
@@ -432,11 +432,13 @@ async function downloadSelectedPhotos() {
             showStatus('Error al descargar la imagen.', 'error');
         }
     } else {
-        // Multiple files: ZIP Archive, use Web Worker SEQUENTIALLY
+        // Multiple files: ZIP Archive, use Web Worker SEQUENTIALLY.
+        // Everything accumulated is kept as Blobs (never strings/ArrayBuffers)
+        // so memory stays flat no matter how many photos are exported.
         showStatus(`Iniciando descarga de ${total} fotos...`, 'info');
-        const zip = new JSZip();
+        const zipWriter = createStoreZipWriter();
         const checkboxArray = Array.from(checkboxes);
-        const catalogEntries = [];
+        const catalogParts = [];
 
         for (let i = 0; i < checkboxArray.length; i++) {
             const cb = checkboxArray[i];
@@ -445,7 +447,7 @@ async function downloadSelectedPhotos() {
             // Update UI
             const percentage = Math.round(((i) / total) * 100);
             elements.downloadSelectedBtn.innerHTML = `<span class="loading"></span> ${i + 1}/${total} (${percentage}%)`;
-            
+
             // Yield to main thread to ensure UI updates
             await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -455,22 +457,23 @@ async function downloadSelectedPhotos() {
                     const dateStr = new Date(item.timestamp).toISOString().replace(/[:.]/g, '-').slice(0, 19);
                     const filename = `GDR_${dateStr}_ID${item.id}.jpg`;
 
-                    let imageDataUrl = item.image;
-                    if (item.image instanceof Blob) {
-                        imageDataUrl = await blobToDataURL(item.image);
-                    }
+                    // Legacy entries are stored as data URL strings
+                    const imageBlob = item.image instanceof Blob ? item.image : dataURLtoBlob(item.image);
 
                     // Process SINGLE photo via Worker
-                    const processedBlob = await processImageInWorker(currentPhotoId, imageDataUrl);
-                    
-                    if (processedBlob) {
-                        zip.file(filename, processedBlob);
-                        catalogEntries.push({
-                            dataURL: await downscaleForCatalog(await blobToDataURL(processedBlob)),
+                    const result = await processImageInWorker(currentPhotoId, imageBlob);
+
+                    if (result && result.processedBlob) {
+                        // Wrap the fragment in a Blob right away so its base64
+                        // string can be garbage collected
+                        const thumbPart = new Blob([buildCatalogThumbHTML({
+                            dataURL: await blobToDataURL(result.catalogBlob),
                             filename: filename,
                             metadata: item.metadata || {},
                             displayDate: item.displayDate || ''
-                        });
+                        }, catalogParts.length)]);
+                        await zipWriter.add(filename, result.processedBlob, new Date(item.timestamp));
+                        catalogParts.push(thumbPart);
                         processed++;
                     } else {
                         console.error(`Failed to process photo ${currentPhotoId}`);
@@ -478,6 +481,13 @@ async function downloadSelectedPhotos() {
                     }
                 }
             } catch (e) {
+                if (e instanceof RangeError) {
+                    // ZIP size limit reached: continuing would fail for every photo
+                    showStatus(e.message, 'error');
+                    elements.downloadSelectedBtn.innerHTML = originalBtnText;
+                    elements.downloadSelectedBtn.disabled = false;
+                    return;
+                }
                 console.error(`Error processing photo ${currentPhotoId}:`, e);
                 errors++;
             }
@@ -490,27 +500,19 @@ async function downloadSelectedPhotos() {
             return;
         }
 
-        elements.downloadSelectedBtn.innerHTML = 'Generando catálogo...';
-        zip.file('catalogo.html', buildCatalogHTML(catalogEntries));
-
-        elements.downloadSelectedBtn.innerHTML = 'Comprimiendo ZIP...';
-        showStatus('Generando archivo ZIP final...', 'info');
-
-        await new Promise(resolve => setTimeout(resolve, 100)); // Final yield
-
         try {
-            const content = await zip.generateAsync({
-                type: "blob", 
-                compression: "STORE" 
-            }, (metadata) => {
-                if(metadata.percent) {
-                    elements.downloadSelectedBtn.innerHTML = `ZIP: ${metadata.percent.toFixed(0)}%`;
-                }
-            });
+            elements.downloadSelectedBtn.innerHTML = 'Generando catálogo...';
+            await zipWriter.add('catalogo.html', buildCatalogBlob(catalogParts), new Date());
 
+            elements.downloadSelectedBtn.innerHTML = 'Empaquetando ZIP...';
+            showStatus('Generando archivo ZIP final...', 'info');
+
+            await new Promise(resolve => setTimeout(resolve, 100)); // Final yield
+
+            const content = zipWriter.finish();
             const zipName = `GDR_CAM_Pack_${new Date().getTime()}.zip`;
             saveAs(content, zipName);
-            
+
             if (errors > 0) {
                 showStatus(`Descarga con advertencias: ${processed} ok, ${errors} fallos.`, 'warning');
             } else {
@@ -518,7 +520,7 @@ async function downloadSelectedPhotos() {
             }
         } catch (e) {
             console.error("Error generating ZIP:", e);
-            showStatus('Error al crear el ZIP.', 'error');
+            showStatus(e instanceof RangeError ? e.message : 'Error al crear el ZIP.', 'error');
         }
     }
 
@@ -535,25 +537,126 @@ function blobToDataURL(blob) {
     });
 }
 
-// Downscales an image data URL so its longest side is <= maxDim (keeps the
-// generated catalog HTML light when exporting many photos)
-function downscaleForCatalog(dataURL, maxDim = 1600, quality = 0.85) {
-    return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            let { width, height } = img;
-            const scale = Math.min(1, maxDim / Math.max(width, height));
-            width = Math.round(width * scale);
-            height = Math.round(height * scale);
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL('image/jpeg', quality));
+// CRC-32 (IEEE) lookup table for the ZIP writer
+const CRC32_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) {
+            c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        }
+        table[n] = c >>> 0;
+    }
+    return table;
+})();
+
+// Reads the Blob in slices so large entries (catalogo.html) never need a
+// single big ArrayBuffer
+async function crc32OfBlob(blob) {
+    const SLICE_SIZE = 8 * 1024 * 1024;
+    let crc = 0xFFFFFFFF;
+    for (let start = 0; start < blob.size; start += SLICE_SIZE) {
+        const bytes = new Uint8Array(await blob.slice(start, start + SLICE_SIZE).arrayBuffer());
+        for (let i = 0; i < bytes.length; i++) {
+            crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+        }
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+// Minimal ZIP writer (STORE, no compression, no ZIP64). The output Blob is
+// composed from references to the entry Blobs, so photo bytes are never copied
+// into JS memory (JSZip.generateAsync buffers the whole archive, which made
+// mobile browsers crash with 50+ photos). Throws RangeError past 4 GB.
+function createStoreZipWriter() {
+    const ZIP32_LIMIT = 0xFFFFFFFF;
+    const SIZE_ERROR = 'El ZIP supera el límite de 4 GB. Exporta menos fotos a la vez.';
+    const parts = [];
+    const entries = [];
+    let offset = 0;
+
+    function toDosDateTime(date) {
+        if (!(date instanceof Date) || isNaN(date.getTime()) || date.getFullYear() < 1980) {
+            date = new Date();
+        }
+        return {
+            time: (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1),
+            date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
         };
-        img.onerror = reject;
-        img.src = dataURL;
-    });
+    }
+
+    return {
+        async add(name, blob, date) {
+            const nameBytes = new TextEncoder().encode(name);
+            const headerSize = 30 + nameBytes.length;
+            if (offset + headerSize + blob.size > ZIP32_LIMIT || entries.length >= 0xFFFF) {
+                throw new RangeError(SIZE_ERROR);
+            }
+
+            const crc = await crc32OfBlob(blob);
+            const dos = toDosDateTime(date);
+
+            const header = new Uint8Array(headerSize);
+            const view = new DataView(header.buffer);
+            view.setUint32(0, 0x04034b50, true);  // local file header signature
+            view.setUint16(4, 20, true);          // version needed to extract
+            view.setUint16(6, 0x0800, true);      // flags: UTF-8 file name
+            view.setUint16(8, 0, true);           // method: STORE
+            view.setUint16(10, dos.time, true);
+            view.setUint16(12, dos.date, true);
+            view.setUint32(14, crc, true);
+            view.setUint32(18, blob.size, true);  // compressed size
+            view.setUint32(22, blob.size, true);  // uncompressed size
+            view.setUint16(26, nameBytes.length, true);
+            view.setUint16(28, 0, true);          // extra field length
+            header.set(nameBytes, 30);
+
+            entries.push({ nameBytes, crc, size: blob.size, dos, offset });
+            parts.push(header, blob);
+            offset += headerSize + blob.size;
+        },
+
+        finish() {
+            const centralStart = offset;
+            let centralSize = 0;
+
+            for (const entry of entries) {
+                const record = new Uint8Array(46 + entry.nameBytes.length);
+                const view = new DataView(record.buffer);
+                view.setUint32(0, 0x02014b50, true);  // central directory signature
+                view.setUint16(4, 20, true);          // version made by
+                view.setUint16(6, 20, true);          // version needed to extract
+                view.setUint16(8, 0x0800, true);      // flags: UTF-8 file name
+                view.setUint16(10, 0, true);          // method: STORE
+                view.setUint16(12, entry.dos.time, true);
+                view.setUint16(14, entry.dos.date, true);
+                view.setUint32(16, entry.crc, true);
+                view.setUint32(20, entry.size, true);
+                view.setUint32(24, entry.size, true);
+                view.setUint16(28, entry.nameBytes.length, true);
+                // extra/comment length, disk start and attributes stay 0
+                view.setUint32(42, entry.offset, true);
+                record.set(entry.nameBytes, 46);
+                parts.push(record);
+                centralSize += record.length;
+            }
+
+            if (centralStart + centralSize + 22 > ZIP32_LIMIT) {
+                throw new RangeError(SIZE_ERROR);
+            }
+
+            const end = new Uint8Array(22);
+            const view = new DataView(end.buffer);
+            view.setUint32(0, 0x06054b50, true);      // end of central directory signature
+            view.setUint16(8, entries.length, true);  // entries on this disk
+            view.setUint16(10, entries.length, true); // total entries
+            view.setUint32(12, centralSize, true);
+            view.setUint32(16, centralStart, true);
+            parts.push(end);
+
+            return new Blob(parts, { type: 'application/zip' });
+        }
+    };
 }
 
 function escapeHtml(str) {
@@ -564,44 +667,49 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;');
 }
 
-// Builds a self-contained HTML photo catalog, phone-gallery style: square
-// thumbnail grid + lightbox with details and a copy-to-clipboard button.
-// Images are embedded as data URLs so the copy canvas is never tainted when
-// the file is opened from file://
-function buildCatalogHTML(entries) {
-    const thumbs = entries.map((entry, idx) => {
-        const m = entry.metadata || {};
-        // location can be flat ({latitude,...}) or GeolocationPosition-like ({coords:{...}})
-        const loc = m.location || {};
-        const coords = loc.coords || loc;
+// Builds the catalog grid item for one photo (thumbnail + hidden details used
+// by the lightbox)
+function buildCatalogThumbHTML(entry, idx) {
+    const m = entry.metadata || {};
+    // location can be flat ({latitude,...}) or GeolocationPosition-like ({coords:{...}})
+    const loc = m.location || {};
+    const coords = loc.coords || loc;
 
-        const details = [];
-        if (m.workFront) details.push(['Frente', m.workFront]);
-        if (m.coronation) details.push(['Coronamiento', m.coronation]);
-        if (m.activityPerformed) details.push(['Actividad', m.activityPerformed]);
-        if (m.observationCategory) details.push(['Categoría de observación', m.observationCategory]);
-        if (entry.displayDate) details.push(['Fecha', entry.displayDate]);
-        if (coords.latitude != null && coords.longitude != null) {
-            let gps = `${Number(coords.latitude).toFixed(6)}, ${Number(coords.longitude).toFixed(6)}`;
-            if (coords.accuracy != null) gps += ` (±${Math.round(coords.accuracy)} m)`;
-            details.push(['Coordenadas GPS', gps]);
-        }
-        if (coords.altitude != null) details.push(['Altitud', `${Math.round(coords.altitude)} m s.n.m.`]);
-        details.push(['Archivo', entry.filename]);
+    const details = [];
+    if (m.workFront) details.push(['Frente', m.workFront]);
+    if (m.coronation) details.push(['Coronamiento', m.coronation]);
+    if (m.activityPerformed) details.push(['Actividad', m.activityPerformed]);
+    if (m.observationCategory) details.push(['Categoría de observación', m.observationCategory]);
+    if (entry.displayDate) details.push(['Fecha', entry.displayDate]);
+    if (coords.latitude != null && coords.longitude != null) {
+        let gps = `${Number(coords.latitude).toFixed(6)}, ${Number(coords.longitude).toFixed(6)}`;
+        if (coords.accuracy != null) gps += ` (±${Math.round(coords.accuracy)} m)`;
+        details.push(['Coordenadas GPS', gps]);
+    }
+    if (coords.altitude != null) details.push(['Altitud', `${Math.round(coords.altitude)} m s.n.m.`]);
+    details.push(['Archivo', entry.filename]);
 
-        const rows = details.map(([label, value]) =>
-            `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`
-        ).join('');
+    const rows = details.map(([label, value]) =>
+        `<div class="detail-row"><span class="detail-label">${escapeHtml(label)}</span><span class="detail-value">${escapeHtml(value)}</span></div>`
+    ).join('');
 
-        return `      <div class="thumb" data-idx="${idx}">
+    return `      <div class="thumb" data-idx="${idx}" data-filename="${escapeHtml(entry.filename)}">
         <img src="${entry.dataURL}" alt="${escapeHtml(entry.filename)}" loading="lazy">
         <div class="details" hidden>${rows}</div>
-      </div>`;
-    }).join('\n');
+      </div>
+`;
+}
 
+// Builds a self-contained HTML photo catalog, phone-gallery style: square
+// thumbnail grid + lightbox with details, copy-to-clipboard and download
+// buttons. Images are embedded as data URLs so the copy canvas is never
+// tainted when the file is opened from file://
+// thumbParts are the Blob fragments from buildCatalogThumbHTML: the document
+// (tens of MB of base64) is never held as a single JS string.
+function buildCatalogBlob(thumbParts) {
     const generated = new Date().toLocaleString();
 
-    return `<!DOCTYPE html>
+    const head = `<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -636,10 +744,13 @@ function buildCatalogHTML(entries) {
   .lb-prev { left: 10px; }
   .lb-next { right: 10px; }
   .lb-close:hover, .lb-nav:hover { background: #007bff; }
-  .copy-btn { position: absolute; top: 10px; right: 10px; background: rgba(0,123,255,0.92); color: #fff;
+  .lb-actions { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .copy-btn { background: rgba(0,123,255,0.92); color: #fff;
     border: none; border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; cursor: pointer;
     box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
   .copy-btn:hover { background: #0069d9; }
+  .download-btn { background: rgba(23,162,184,0.92); }
+  .download-btn:hover { background: #138496; }
   .copy-btn.copied { background: #28a745; }
   .detail-row { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
   .detail-row:last-child { border-bottom: none; }
@@ -655,7 +766,7 @@ function buildCatalogHTML(entries) {
 <body>
   <header>
     <h1>📷 Catálogo Fotográfico GDR-CAM</h1>
-    <p>Generado: ${escapeHtml(generated)} · ${entries.length} foto(s) · Toca una foto para ver detalles</p>
+    <p>Generado: ${escapeHtml(generated)} · ${thumbParts.length} foto(s) · Toca una foto para ver detalles</p>
   </header>
   <div class="search-bar">
     <input type="search" id="search1" placeholder="🔍 Buscar (frente, actividad, fecha...)" oninput="filterThumbs()">
@@ -663,8 +774,9 @@ function buildCatalogHTML(entries) {
   </div>
   <p class="search-count" id="search-count"></p>
   <div class="catalog">
-${thumbs}
-  </div>
+`;
+
+    const foot = `  </div>
   <div id="lightbox" class="lightbox" hidden>
     <button class="lb-close" onclick="closeLightbox()">✕</button>
     <button class="lb-nav lb-prev" onclick="navLightbox(-1)">‹</button>
@@ -672,7 +784,10 @@ ${thumbs}
     <div class="lb-content">
       <div class="lb-img-wrap">
         <img id="lb-img" src="" alt="">
-        <button class="copy-btn" onclick="copyCardImage(this)">📋 Copiar imagen</button>
+        <div class="lb-actions">
+          <button class="copy-btn" onclick="copyCardImage(this)">📋 Copiar imagen</button>
+          <button class="copy-btn download-btn" onclick="downloadCardImage(this)">⬇ Descargar</button>
+        </div>
       </div>
       <div class="lb-counter" id="lb-counter"></div>
       <div class="details lb-details" id="lb-details"></div>
@@ -717,6 +832,7 @@ function openLightbox(idx) {
   lbImg.src = t.querySelector('img').src;
   lbDetails.innerHTML = t.querySelector('.details').innerHTML;
   lbCounter.textContent = (idx + 1) + ' / ' + visibleThumbs.length;
+  lightbox.dataset.filename = t.dataset.filename || '';
   lightbox.hidden = false;
   document.body.style.overflow = 'hidden';
 }
@@ -737,12 +853,13 @@ document.addEventListener('keydown', function (e) {
 });
 
 async function copyCardImage(btn) {
-  var original = btn.textContent;
+  // Remember the label once so repeated clicks don't keep the feedback text
+  var original = btn.dataset.label || (btn.dataset.label = btn.textContent);
   try {
     if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) {
       throw new Error('Clipboard API no disponible');
     }
-    var img = btn.parentElement.querySelector('img');
+    var img = lbImg;
     if (!img.complete || img.naturalWidth === 0) {
       await new Promise(function (res, rej) { img.onload = res; img.onerror = rej; });
     }
@@ -760,13 +877,42 @@ async function copyCardImage(btn) {
   }
   setTimeout(function () { btn.textContent = original; btn.classList.remove('copied'); }, 2500);
 }
+
+// Saves the image shown in the lightbox (the copy embedded in this catalog)
+function downloadCardImage(btn) {
+  // Remember the label once so repeated clicks don't keep the feedback text
+  var original = btn.dataset.label || (btn.dataset.label = btn.textContent);
+  try {
+    var parts = lbImg.src.split(',');
+    var mime = parts[0].match(/:(.*?);/)[1];
+    var bin = atob(parts[1]);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = lightbox.dataset.filename || 'foto.jpg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    btn.textContent = '✓ Descargada';
+    btn.classList.add('copied');
+  } catch (e) {
+    btn.textContent = '⚠ Mantén pulsada la imagen > Guardar';
+  }
+  setTimeout(function () { btn.textContent = original; btn.classList.remove('copied'); }, 2500);
+}
 </scr` + `ipt>
 </body>
 </html>`;
+
+    return new Blob([head, ...thumbParts, foot], { type: 'text/html' });
 }
 
-// Wrapper to handle Worker communication as a Promise with Timeout
-function processImageInWorker(id, imageDataUrl) {
+// Wrapper to handle Worker communication as a Promise with Timeout.
+// Resolves with { processedBlob, catalogBlob }
+function processImageInWorker(id, imageBlob) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
             if (workerPromises.has(id)) {
@@ -775,12 +921,13 @@ function processImageInWorker(id, imageDataUrl) {
             }
         }, 15000); // 15 second timeout per image
 
-        workerPromises.set(id, { 
-            resolve: (blob) => { clearTimeout(timeout); resolve(blob); },
+        workerPromises.set(id, {
+            resolve: (result) => { clearTimeout(timeout); resolve(result); },
             reject: (err) => { clearTimeout(timeout); reject(err); }
         });
 
-        imageProcessorWorker.postMessage({ id, imageDataUrl });
+        // Blobs are passed by reference, the photo bytes are not copied
+        imageProcessorWorker.postMessage({ id, imageBlob });
     });
 }
 
